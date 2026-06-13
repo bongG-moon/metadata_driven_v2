@@ -8,7 +8,7 @@
 | # | Node | Component file | Role |
 | --- | --- | --- | --- |
 | 00 | `00 Request State Loader` | `00_request_state_loader.py` | 질문, session id, 이전 state를 compact payload로 생성 |
-| 01 | `01 Metadata Context Loader` | `01_metadata_context_loader.py` | MongoDB 또는 local JSON에서 domain/table/filter metadata 로드 |
+| 01 | `01 Metadata Context Loader` | `01_metadata_context_loader.py` | MongoDB에서 domain/table/filter metadata 로드 |
 | 02 | `02 Intent Prompt Builder` | `02_intent_prompt_builder.py` | 의도 분석 prompt 생성 |
 | LLM-A | Gemini/LLM intent node | Langflow 기본 LLM node | intent JSON 생성 |
 | 03 | `03 Intent Plan Normalizer` | `03_intent_plan_normalizer.py` | intent JSON을 retrieval jobs와 route로 정규화 |

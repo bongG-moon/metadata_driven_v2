@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
+import types
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +20,7 @@ def load_component(path: str):
     return module
 
 
-def test_langflow_llm_node_style_flow_contract() -> None:
+def test_langflow_llm_node_style_flow_contract(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
     intent_prompt_builder = load_component("langflow_components/main_flow/02_intent_prompt_builder.py")
@@ -33,11 +36,7 @@ def test_langflow_llm_node_style_flow_contract() -> None:
     answer_message_adapter = load_component("langflow_components/main_flow/11_answer_message_adapter.py")
 
     payload = request_loader.build_request_payload("오늘 전체 재공 수량 알려줘", "test-session")
-    payload = metadata_loader.load_metadata_payload(
-        payload,
-        metadata_source="local",
-        metadata_dir=str(ROOT / "metadata"),
-    )
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
 
     intent_prompt = intent_prompt_builder.build_intent_prompt_payload(payload)["prompt"]
     assert "Langflow Gemini/LLM node" in intent_prompt
@@ -117,17 +116,13 @@ def test_langflow_llm_node_style_flow_contract() -> None:
     assert "```python" in playground_message
 
 
-def test_intent_normalizer_builds_fallback_jobs_when_llm_omits_jobs() -> None:
+def test_intent_normalizer_builds_fallback_jobs_when_llm_omits_jobs(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
     intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성율을 보여줘", "test-session")
-    payload = metadata_loader.load_metadata_payload(
-        payload,
-        metadata_source="local",
-        metadata_dir=str(ROOT / "metadata"),
-    )
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
     intent_llm_json = {
         "intent_type": "multi_source_analysis",
         "analysis_kind": "production_wip_target_rate",
@@ -194,3 +189,81 @@ def test_answer_message_adapter_escapes_tilde_strikethrough_markdown() -> None:
 
     assert "\\~\\~HOLD\\~\\~" in message
     assert "~~HOLD~~" not in message
+
+
+def load_seed_metadata_payload(module: Any, payload: dict[str, Any], monkeypatch: Any) -> dict[str, Any]:
+    install_fake_pymongo(monkeypatch, seed_metadata_docs())
+    return module.load_metadata_payload(
+        payload,
+        mongo_uri="mongodb://fake",
+        mongo_database="metadata_driven_agent_v2",
+        domain_collection_name="agent_v2_domain_items",
+        table_catalog_collection_name="agent_v2_table_catalog_items",
+        main_flow_filter_collection_name="agent_v2_main_flow_filters",
+    )
+
+
+def seed_metadata_docs() -> dict[str, list[dict[str, Any]]]:
+    domain = read_metadata_json("domain_items.json")
+    table_catalog = read_metadata_json("table_catalog.json")
+    filters = read_metadata_json("main_flow_filters.json")
+    domain_docs: list[dict[str, Any]] = []
+    for section, value in domain.items():
+        if section == "product_key_columns":
+            domain_docs.append({"section": section, "key": section, "columns": value})
+        elif isinstance(value, dict):
+            for key, payload in value.items():
+                domain_docs.append({"section": section, "key": key, "payload": payload})
+    table_docs = [
+        {"dataset_key": key, "payload": payload}
+        for key, payload in (table_catalog.get("datasets") or {}).items()
+    ]
+    filter_docs = [{"filter_key": key, "payload": payload} for key, payload in filters.items()]
+    return {
+        "agent_v2_domain_items": domain_docs,
+        "agent_v2_table_catalog_items": table_docs,
+        "agent_v2_main_flow_filters": filter_docs,
+    }
+
+
+def read_metadata_json(filename: str) -> dict[str, Any]:
+    return json.loads((ROOT / "metadata" / filename).read_text(encoding="utf-8"))
+
+
+class FakeCursor(list):
+    def limit(self, value: int) -> "FakeCursor":
+        return FakeCursor(self[:value])
+
+
+class FakeCollection:
+    def __init__(self, docs: list[dict[str, Any]]) -> None:
+        self.docs = docs
+
+    def find(self, query: dict[str, Any]) -> FakeCursor:
+        return FakeCursor(self.docs)
+
+
+class FakeDatabase:
+    def __init__(self, docs_by_collection: dict[str, list[dict[str, Any]]]) -> None:
+        self.docs_by_collection = docs_by_collection
+
+    def __getitem__(self, collection_name: str) -> FakeCollection:
+        return FakeCollection(self.docs_by_collection.get(collection_name, []))
+
+
+class FakeClient:
+    def __init__(self, docs_by_collection: dict[str, list[dict[str, Any]]]) -> None:
+        self.docs_by_collection = docs_by_collection
+
+    def __getitem__(self, database_name: str) -> FakeDatabase:
+        return FakeDatabase(self.docs_by_collection)
+
+    def close(self) -> None:
+        return None
+
+
+def install_fake_pymongo(monkeypatch: Any, docs_by_collection: dict[str, list[dict[str, Any]]]) -> None:
+    def mongo_client(*args: Any, **kwargs: Any) -> FakeClient:
+        return FakeClient(docs_by_collection)
+
+    monkeypatch.setitem(sys.modules, "pymongo", types.SimpleNamespace(MongoClient=mongo_client))

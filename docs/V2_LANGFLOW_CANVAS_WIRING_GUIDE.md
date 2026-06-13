@@ -11,7 +11,7 @@
 | --- | --- | --- | --- |
 | Input | Chat Input | Langflow 기본 node | 사용자 질문 입력 |
 | 00 | 00 Request State Loader | `langflow_components/main_flow/00_request_state_loader.py` | 질문, session id, 이전 state를 compact payload로 변환 |
-| 01 | 01 Metadata Context Loader | `langflow_components/main_flow/01_metadata_context_loader.py` | MongoDB 또는 local JSON metadata 로드 |
+| 01 | 01 Metadata Context Loader | `langflow_components/main_flow/01_metadata_context_loader.py` | MongoDB metadata 로드 |
 | 02 | 02 Intent Prompt Builder | `langflow_components/main_flow/02_intent_prompt_builder.py` | intent JSON 생성을 위한 LLM prompt 생성 |
 | LLM-A | Gemini/LLM Intent JSON | Langflow 기본 Gemini/LLM node | intent JSON 생성 |
 | 03 | 03 Intent Plan Normalizer | `langflow_components/main_flow/03_intent_plan_normalizer.py` | intent JSON 정규화, retrieval_jobs 생성/보강 |
@@ -40,30 +40,28 @@
 | 6 | Text/Secret Input | value | 01 Metadata Context Loader | `mongo_uri` | MongoDB 사용 시 필요 |
 | 7 | Text Input | value | 01 Metadata Context Loader | `mongo_database` | 기본값 예: `metadata_driven_agent_v2` |
 | 8 | Text Input 3개 | value | 01 Metadata Context Loader | `domain_collection_name`, `table_catalog_collection_name`, `main_flow_filter_collection_name` | full collection name 입력 |
-| 9 | Text Input | value | 01 Metadata Context Loader | `metadata_source` | `mongodb`, `local`, `auto` 중 선택 |
-| 10 | Text Input | value | 01 Metadata Context Loader | `metadata_dir` | local 검증용 `metadata` 폴더 경로 |
-| 11 | Text Input | value | 05 MongoDB Data Store, 06 MongoDB Data Loader | `result_collection_name` | full collection name 입력. 기본 `agent_v2_result_store` |
-| 12 | 01 Metadata Context Loader | `payload_out` | 02 Intent Prompt Builder | `payload` | metadata 포함 payload |
-| 13 | 02 Intent Prompt Builder | `intent_prompt` | LLM-A Gemini/LLM Intent JSON | prompt/message input | JSON-only 응답 권장 |
-| 14 | 01 Metadata Context Loader | `payload_out` | 03 Intent Plan Normalizer | `payload` | LLM 응답과 결합할 payload |
-| 15 | LLM-A Gemini/LLM Intent JSON | text/message output | 03 Intent Plan Normalizer | `llm_response` | intent JSON 응답 |
-| 16 | 03 Intent Plan Normalizer | `payload_out` | Data Retrieval Flow start node(s) | `payload` | 아래 2장 중 하나 선택 |
-| 17 | 03 Intent Plan Normalizer | `payload_out` | 04 Retrieval Payload Adapter | `main_payload` | main payload branch |
-| 18 | Data Retrieval Flow end | `retrieval_payload` | 04 Retrieval Payload Adapter | `retrieval_payload` | source 조회 결과 병합 |
-| 19 | 04 Retrieval Payload Adapter | `payload` | 05 MongoDB Data Store | `payload` | source rows 저장 및 ref compact |
-| 20 | 05 MongoDB Data Store | `payload_out` | 06 MongoDB Data Loader | `payload` | pandas 직전 rows 복원 |
-| 21 | 06 MongoDB Data Loader | `payload_out` | 07 Pandas Prompt Builder | `payload` | pandas prompt 생성 |
-| 22 | 07 Pandas Prompt Builder | `pandas_prompt` | LLM-B Gemini/LLM Pandas Code JSON | prompt/message input | JSON-only 응답 필수 |
-| 23 | 06 MongoDB Data Loader | `payload_out` | 08 Pandas Code Executor | `payload` | code 실행용 source rows payload |
-| 24 | LLM-B Gemini/LLM Pandas Code JSON | text/message output | 08 Pandas Code Executor | `llm_response` | pandas code JSON 응답 |
-| 25 | 08 Pandas Code Executor | `payload_out` | 09 Answer Prompt Builder | `payload` | 최종 답변 prompt 생성 |
-| 26 | 09 Answer Prompt Builder | `answer_prompt` | LLM-C Gemini/LLM Final Answer | prompt/message input | plain Korean text 또는 JSON 가능 |
-| 27 | 08 Pandas Code Executor | `payload_out` | 10 Answer Response Builder | `payload` | 답변/state 조립용 payload |
-| 28 | LLM-C Gemini/LLM Final Answer | text/message output | 10 Answer Response Builder | `llm_response` | 최종 답변 |
-| 29 | 10 Answer Response Builder | `payload_out` | 05 MongoDB Data Store | `payload` | final `data.rows`와 `state.current_data.rows` compact |
-| 30 | 05 MongoDB Data Store | `payload_out` | 11 Answer Message Adapter | `payload` | Playground 출력용 message 생성 |
-| 31 | 11 Answer Message Adapter | `message` | Chat Output | `message` | 사용자에게 보일 최종 출력 |
-| 32 | 05 MongoDB Data Store after #29 | `payload_out.state` | State Store | stored state | 다음 질문의 00 `state` input으로 재사용 |
+| 9 | Text Input | value | 05 MongoDB Data Store, 06 MongoDB Data Loader | `result_collection_name` | full collection name 입력. 기본 `agent_v2_result_store` |
+| 10 | 01 Metadata Context Loader | `payload_out` | 02 Intent Prompt Builder | `payload` | metadata 포함 payload |
+| 11 | 02 Intent Prompt Builder | `intent_prompt` | LLM-A Gemini/LLM Intent JSON | prompt/message input | JSON-only 응답 권장 |
+| 12 | 01 Metadata Context Loader | `payload_out` | 03 Intent Plan Normalizer | `payload` | LLM 응답과 결합할 payload |
+| 13 | LLM-A Gemini/LLM Intent JSON | text/message output | 03 Intent Plan Normalizer | `llm_response` | intent JSON 응답 |
+| 14 | 03 Intent Plan Normalizer | `payload_out` | Data Retrieval Flow start node(s) | `payload` | 아래 2장 중 하나 선택 |
+| 15 | 03 Intent Plan Normalizer | `payload_out` | 04 Retrieval Payload Adapter | `main_payload` | main payload branch |
+| 16 | Data Retrieval Flow end | `retrieval_payload` | 04 Retrieval Payload Adapter | `retrieval_payload` | source 조회 결과 병합 |
+| 17 | 04 Retrieval Payload Adapter | `payload` | 05 MongoDB Data Store | `payload` | source rows 저장 및 ref compact |
+| 18 | 05 MongoDB Data Store | `payload_out` | 06 MongoDB Data Loader | `payload` | pandas 직전 rows 복원 |
+| 19 | 06 MongoDB Data Loader | `payload_out` | 07 Pandas Prompt Builder | `payload` | pandas prompt 생성 |
+| 20 | 07 Pandas Prompt Builder | `pandas_prompt` | LLM-B Gemini/LLM Pandas Code JSON | prompt/message input | JSON-only 응답 필수 |
+| 21 | 06 MongoDB Data Loader | `payload_out` | 08 Pandas Code Executor | `payload` | code 실행용 source rows payload |
+| 22 | LLM-B Gemini/LLM Pandas Code JSON | text/message output | 08 Pandas Code Executor | `llm_response` | pandas code JSON 응답 |
+| 23 | 08 Pandas Code Executor | `payload_out` | 09 Answer Prompt Builder | `payload` | 최종 답변 prompt 생성 |
+| 24 | 09 Answer Prompt Builder | `answer_prompt` | LLM-C Gemini/LLM Final Answer | prompt/message input | plain Korean text 또는 JSON 가능 |
+| 25 | 08 Pandas Code Executor | `payload_out` | 10 Answer Response Builder | `payload` | 답변/state 조립용 payload |
+| 26 | LLM-C Gemini/LLM Final Answer | text/message output | 10 Answer Response Builder | `llm_response` | 최종 답변 |
+| 27 | 10 Answer Response Builder | `payload_out` | 05 MongoDB Data Store | `payload` | final `data.rows`와 `state.current_data.rows` compact |
+| 28 | 05 MongoDB Data Store | `payload_out` | 11 Answer Message Adapter | `payload` | Playground 출력용 message 생성 |
+| 29 | 11 Answer Message Adapter | `message` | Chat Output | `message` | 사용자에게 보일 최종 출력 |
+| 30 | 05 MongoDB Data Store after #27 | `payload_out.state` | State Store | stored state | 다음 질문의 00 `state` input으로 재사용 |
 
 ### 1.3 MongoDB Result Store 입력 의미
 
@@ -156,4 +154,4 @@ python tools\upload_json_to_mongodb.py --dry-run
 python tools\validate_llm_in_loop.py --limit 1
 ```
 
-Langflow canvas에서는 먼저 `metadata_source=local`, dummy retrieval, `enabled=false`로 wiring을 검증하고, 그 다음 MongoDB `metadata_source=mongodb`, `enabled=true`, live source credential 순서로 확장하는 것을 권장합니다.
+Langflow canvas에서는 MongoDB metadata collection 3개가 준비된 상태에서 dummy retrieval, result store `enabled=false`로 wiring을 먼저 검증하고, 그 다음 result store `enabled=true`, live source credential 순서로 확장하는 것을 권장합니다.

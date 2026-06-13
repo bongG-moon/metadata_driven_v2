@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
 from copy import deepcopy
 from datetime import datetime, timezone
 from importlib import import_module
-from pathlib import Path
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
@@ -33,60 +31,25 @@ COLLECTION_ENV_KEYS = {
     "main_flow_filters": "MONGODB_MAIN_FLOW_FILTER_COLLECTION",
 }
 
-LEGACY_COLLECTION_SUFFIXES = {
-    "domain_items": "domain_items",
-    "table_catalog": "table_catalog_items",
-    "main_flow_filters": "main_flow_filters",
-}
-
-
 def load_metadata_payload(
     payload: dict[str, Any],
     mongo_uri: str = "",
     mongo_database: str = "",
-    collection_prefix: str = "",
-    metadata_source: str = "mongodb",
-    metadata_dir: str = "",
     load_limit: str = "1000",
     domain_collection_name: str = "",
     table_catalog_collection_name: str = "",
     main_flow_filter_collection_name: str = "",
 ) -> dict[str, Any]:
-    source_mode = _clean_text(metadata_source or os.getenv("METADATA_SOURCE") or "mongodb").lower()
     mongo_uri = _clean_text(mongo_uri or os.getenv("MONGODB_URI"))
     mongo_database = _clean_text(mongo_database or os.getenv("MONGODB_DATABASE") or "metadata_driven_agent_v2")
     collections = _metadata_collections(
         domain_collection_name,
         table_catalog_collection_name,
         main_flow_filter_collection_name,
-        collection_prefix,
     )
     limit = _safe_int(load_limit, default=1000)
-
-    metadata: dict[str, Any]
-    load_info: dict[str, Any]
-    if source_mode in {"mongodb", "mongo", "auto"}:
-        metadata, load_info = load_metadata_from_mongodb(mongo_uri, mongo_database, collections, limit)
-        if not load_info["errors"] and _metadata_has_core_items(metadata):
-            return _attach_metadata(payload, metadata, load_info)
-        if source_mode in {"mongodb", "mongo"} and not metadata_dir:
-            return _attach_metadata(payload, metadata, load_info)
-
-    if metadata_dir:
-        metadata, local_info = load_metadata_from_local_files(metadata_dir)
-        if source_mode in {"mongodb", "mongo", "auto"}:
-            local_info["fallback_from"] = load_info
-        return _attach_metadata(payload, metadata, local_info)
-
-    empty_info = {
-        "source": source_mode,
-        "loaded_at": _now_iso(),
-        "database": mongo_database,
-        "collections": collections,
-        "counts": _metadata_counts(_empty_metadata()),
-        "errors": ["No MongoDB metadata was loaded and metadata_dir is empty."],
-    }
-    return _attach_metadata(payload, _empty_metadata(), empty_info)
+    metadata, load_info = load_metadata_from_mongodb(mongo_uri, mongo_database, collections, limit)
+    return _attach_metadata(payload, metadata, load_info)
 
 
 def load_metadata_from_mongodb(
@@ -134,28 +97,6 @@ def load_metadata_from_mongodb(
             docs_by_kind["main_flow_filters"],
         )
     return metadata, _load_info("mongodb", mongo_database, collections, metadata, errors, docs_by_kind)
-
-
-def load_metadata_from_local_files(metadata_dir: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    metadata_path = Path(metadata_dir)
-    errors: list[str] = []
-    metadata = _empty_metadata()
-    try:
-        metadata = {
-            "domain_items": _read_json(metadata_path / "domain_items.json"),
-            "table_catalog": _read_json(metadata_path / "table_catalog.json"),
-            "main_flow_filters": _read_json(metadata_path / "main_flow_filters.json"),
-        }
-    except Exception as exc:
-        errors.append(str(exc))
-    return metadata, {
-        "source": "local_json",
-        "loaded_at": _now_iso(),
-        "metadata_dir": str(metadata_path),
-        "collections": {},
-        "counts": _metadata_counts(metadata),
-        "errors": errors,
-    }
 
 
 def _assemble_metadata_from_mongo_docs(
@@ -228,12 +169,6 @@ def _empty_metadata() -> dict[str, Any]:
     }
 
 
-def _metadata_has_core_items(metadata: dict[str, Any]) -> bool:
-    domain = metadata.get("domain_items", {})
-    table_catalog = metadata.get("table_catalog", {})
-    return bool(domain.get("product_key_columns")) and bool(table_catalog.get("datasets"))
-
-
 def _metadata_counts(metadata: dict[str, Any]) -> dict[str, int]:
     domain = metadata.get("domain_items", {}) if isinstance(metadata.get("domain_items"), dict) else {}
     return {
@@ -252,23 +187,16 @@ def _metadata_collections(
     domain_collection_name: str = "",
     table_catalog_collection_name: str = "",
     main_flow_filter_collection_name: str = "",
-    collection_prefix: str = "",
 ) -> dict[str, str]:
     raw_inputs = {
         "domain_items": domain_collection_name,
         "table_catalog": table_catalog_collection_name,
         "main_flow_filters": main_flow_filter_collection_name,
     }
-    legacy_prefix = _clean_text(collection_prefix or os.getenv("MONGODB_COLLECTION_PREFIX"))
     collections: dict[str, str] = {}
     for kind, default_collection in DEFAULT_COLLECTIONS.items():
         explicit = _clean_text(raw_inputs.get(kind) or os.getenv(COLLECTION_ENV_KEYS[kind]))
-        if explicit:
-            collections[kind] = explicit
-        elif legacy_prefix:
-            collections[kind] = f"{legacy_prefix}_{LEGACY_COLLECTION_SUFFIXES[kind]}"
-        else:
-            collections[kind] = default_collection
+        collections[kind] = explicit or default_collection
     return collections
 
 
@@ -301,7 +229,6 @@ def _compact_load_info(load_info: dict[str, Any]) -> dict[str, Any]:
         "document_counts": load_info.get("document_counts", {}),
         "counts": load_info.get("counts", {}),
         "errors": load_info.get("errors", []),
-        "fallback_from": _compact_load_info(load_info["fallback_from"]) if isinstance(load_info.get("fallback_from"), dict) else None,
     }
 
 
@@ -316,11 +243,6 @@ def _as_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         value = [value]
     return [_clean_text(item) for item in value if _clean_text(item)]
-
-
-def _read_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as file:
-        return json.load(file)
 
 
 def _safe_int(value: Any, default: int) -> int:
@@ -366,8 +288,6 @@ class MetadataContextLoader(Component):
             display_name="Main Flow Filter Collection Name",
             value=DEFAULT_COLLECTIONS["main_flow_filters"],
         ),
-        MessageTextInput(name="metadata_source", display_name="Metadata Source", value="mongodb", advanced=True),
-        MessageTextInput(name="metadata_dir", display_name="Local Metadata Directory", value="", advanced=True),
         MessageTextInput(name="load_limit", display_name="Load Limit", value="1000", advanced=True),
     ]
     outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]
@@ -378,9 +298,6 @@ class MetadataContextLoader(Component):
             payload,
             getattr(self, "mongo_uri", ""),
             getattr(self, "mongo_database", ""),
-            collection_prefix="",
-            metadata_source=getattr(self, "metadata_source", "mongodb"),
-            metadata_dir=getattr(self, "metadata_dir", ""),
             load_limit=getattr(self, "load_limit", "1000"),
             domain_collection_name=getattr(self, "domain_collection_name", ""),
             table_catalog_collection_name=getattr(self, "table_catalog_collection_name", ""),

@@ -120,3 +120,5 @@ def test_mongodb_metadata_components_expose_full_collection_names() -> None:
 
         assert expected_inputs.issubset(input_names)
         assert "collection_prefix" not in input_names
+        assert "metadata_source" not in input_names
+        assert "metadata_dir" not in input_names
