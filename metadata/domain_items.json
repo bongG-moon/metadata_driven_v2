@@ -1,0 +1,124 @@
+{
+  "process_groups": {
+    "DA": {
+      "display_name": "D/A",
+      "aliases": ["DA", "D/A", "da", "d/a"],
+      "processes": ["D/A1", "D/A2", "D/A3", "D/A4", "D/A5", "D/A6"]
+    },
+    "WB": {
+      "display_name": "W/B",
+      "aliases": ["WB", "W/B", "wb", "w/b"],
+      "processes": ["W/B1", "W/B2", "W/B3", "W/B4", "W/B5", "W/B6"]
+    },
+    "DP": {
+      "display_name": "D/P",
+      "aliases": ["DP", "D/P", "dp", "d/p"],
+      "processes": ["D/P1", "D/P2"]
+    },
+    "BG": {
+      "display_name": "B/G",
+      "aliases": ["BG", "B/G", "b/g"],
+      "processes": ["B/G1", "B/G2"]
+    },
+    "WSD": {
+      "display_name": "WSD",
+      "aliases": ["WSD", "wsd"],
+      "processes": ["WSD1", "WSD2"]
+    },
+    "DS": {
+      "display_name": "D/S",
+      "aliases": ["DS", "D/S", "ds", "d/s"],
+      "processes": ["D/S1", "D/S2"]
+    },
+    "FCB": {
+      "display_name": "FCB",
+      "aliases": ["FCB", "fcb"],
+      "processes": ["FCB1", "FCB2"]
+    },
+    "FCBH": {
+      "display_name": "FCBH",
+      "aliases": ["FCBH", "fcbh"],
+      "processes": ["FCBH1", "FCBH2"]
+    },
+    "BM": {
+      "display_name": "B/M",
+      "aliases": ["BM", "B/M", "비엠", "bm", "b/m"],
+      "processes": ["B/M1", "B/M2"]
+    }
+  },
+  "product_terms": {
+    "hbm": {
+      "display_name": "HBM/3DS/TSV 제품",
+      "aliases": ["HBM", "3DS", "TSV", "HBM제품", "HBM 제품"],
+      "condition": {"TSV_DIE_TYP": {"exists": true, "not_in": [null, ""]}}
+    },
+    "automotive": {
+      "display_name": "AUTO향 제품",
+      "aliases": ["AUTO향", "오토모티브향", "오토향"],
+      "condition": {"MCP_NO": {"exists": true, "last_char_in": ["I", "O", "N", "P", "Q", "V"]}}
+    }
+  },
+  "quantity_terms": {
+    "production": {
+      "aliases": ["생산량", "생산실적", "실적"],
+      "dataset_family": "production",
+      "quantity_column": "PRODUCTION",
+      "aggregation": "sum"
+    },
+    "wip": {
+      "aliases": ["재공", "재공수량", "WIP", "공정 물량"],
+      "dataset_family": "wip",
+      "quantity_column": "WIP",
+      "aggregation": "sum"
+    },
+    "lot_count": {
+      "aliases": ["Lot 수량", "LOT 수량", "Lot 개수", "lot count"],
+      "dataset_key": "lot_status",
+      "quantity_column": "LOT_ID",
+      "aggregation": "nunique",
+      "output_column": "LOT_COUNT"
+    }
+  },
+  "metric_terms": {
+    "achievement_rate": {
+      "aliases": ["생산달성률", "달성율", "달성률"],
+      "formula": "sum(PRODUCTION) / sum(OUT_PLAN) * 100",
+      "calculation_rule": "aggregate_first"
+    },
+    "target_gap": {
+      "aliases": ["목표 미달", "부족분"],
+      "formula": "max(sum(OUT_PLAN) - sum(PRODUCTION), 0)",
+      "calculation_rule": "aggregate_first"
+    },
+    "dynamic_tat": {
+      "aliases": ["동적TAT", "dynamic TAT"],
+      "formula": "sum(WIP) / sum(PRODUCTION)",
+      "calculation_rule": "aggregate_first"
+    }
+  },
+  "status_terms": {
+    "hold_lot": {
+      "aliases": ["hold lot", "hold된 lot", "hold상태 lot", "Hold Lot"],
+      "dataset_key": "lot_status",
+      "condition": {"LOT_HOLD_STAT_CD": ["HOLD", "OnHold"]},
+      "result_mode": "detail_rows"
+    },
+    "waiting_lot": {
+      "aliases": ["작업대기 Lot", "작업대기 Lot 수량"],
+      "dataset_key": "lot_status",
+      "condition": {"LOT_STAT_CD": ["WAITING"]},
+      "quantity_column": "LOT_ID",
+      "aggregation": "nunique",
+      "output_column": "LOT_COUNT"
+    },
+    "running_lot": {
+      "aliases": ["작업중 Lot", "작업중 Lot 수량"],
+      "dataset_key": "lot_status",
+      "condition": {"LOT_STAT_CD": ["RUNNING"]},
+      "quantity_column": "LOT_ID",
+      "aggregation": "nunique",
+      "output_column": "LOT_COUNT"
+    }
+  },
+  "product_key_columns": ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO"]
+}

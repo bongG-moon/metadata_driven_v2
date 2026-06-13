@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> int:
+    load_env_file(PROJECT_ROOT / ".env")
+    parser = argparse.ArgumentParser(description="Upload local JSON metadata/sample files to MongoDB.")
+    parser.add_argument("--root", default=str(PROJECT_ROOT), help="Project root that contains metadata/ and sample_data/.")
+    parser.add_argument("--mongo-uri", default=os.getenv("MONGODB_URI"), help="MongoDB URI. Defaults to MONGODB_URI.")
+    parser.add_argument("--database", default=os.getenv("MONGODB_DATABASE", "metadata_driven_agent_v2"))
+    parser.add_argument("--collection-prefix", default=os.getenv("MONGODB_COLLECTION_PREFIX", "agent_v2"))
+    parser.add_argument(
+        "--include-regression",
+        action="store_true",
+        help="Also upload regression_questions.json. Default uploads only the 3 core metadata collections.",
+    )
+    parser.add_argument(
+        "--include-sample-data",
+        action="store_true",
+        help="Also upload sample_data/*.json collections. Use only for local validation fixtures.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print upload plan without connecting to MongoDB.")
+    parser.add_argument(
+        "--mode",
+        choices=["upsert", "replace"],
+        default="upsert",
+        help="upsert updates by deterministic _id. replace drops target collections before inserting.",
+    )
+    args = parser.parse_args()
+
+    root = Path(args.root).resolve()
+    batches = build_upload_batches(
+        root,
+        args.collection_prefix,
+        include_regression=args.include_regression,
+        include_sample_data=args.include_sample_data,
+    )
+    if args.dry_run:
+        print_upload_plan(batches, database=args.database)
+        return 0
+
+    if not args.mongo_uri:
+        print("Missing --mongo-uri or MONGODB_URI.", file=sys.stderr)
+        return 2
+
+    upload_batches(args.mongo_uri, args.database, batches, mode=args.mode)
+    return 0
+
+
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+def build_upload_batches(
+    root: Path,
+    collection_prefix: str,
+    include_regression: bool = False,
+    include_sample_data: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
+    metadata_dir = root / "metadata"
+    sample_dir = root / "sample_data"
+
+    batches: dict[str, list[dict[str, Any]]] = {
+        f"{collection_prefix}_domain_items": _domain_item_docs(metadata_dir / "domain_items.json"),
+        f"{collection_prefix}_table_catalog_items": _table_catalog_docs(metadata_dir / "table_catalog.json"),
+        f"{collection_prefix}_main_flow_filters": _main_flow_filter_docs(metadata_dir / "main_flow_filters.json"),
+    }
+
+    if include_regression:
+        batches[f"{collection_prefix}_regression_questions"] = _regression_question_docs(metadata_dir / "regression_questions.json")
+
+    if include_sample_data:
+        for path in sorted(sample_dir.glob("*.json")):
+            batches[f"{collection_prefix}_sample_{path.stem}"] = _sample_row_docs(path)
+
+    return batches
+
+
+def upload_batches(mongo_uri: str, database: str, batches: dict[str, list[dict[str, Any]]], mode: str) -> None:
+    try:
+        from pymongo import MongoClient
+    except ImportError as exc:
+        raise SystemExit("pymongo is required. Install with: python -m pip install pymongo") from exc
+
+    client = MongoClient(mongo_uri)
+    db = client[database]
+    for collection_name, docs in batches.items():
+        collection = db[collection_name]
+        if mode == "replace":
+            collection.drop()
+        upserted = 0
+        modified = 0
+        for doc in docs:
+            result = collection.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+            upserted += 1 if result.upserted_id is not None else 0
+            modified += result.modified_count
+        print(f"{database}.{collection_name}: docs={len(docs)}, upserted={upserted}, modified={modified}")
+
+
+def print_upload_plan(batches: dict[str, list[dict[str, Any]]], database: str) -> None:
+    print(f"database: {database}")
+    for collection_name, docs in batches.items():
+        preview_ids = [doc["_id"] for doc in docs[:3]]
+        print(f"- {collection_name}: {len(docs)} docs, preview_ids={preview_ids}")
+
+
+def _domain_item_docs(path: Path) -> list[dict[str, Any]]:
+    data = _read_json(path)
+    docs: list[dict[str, Any]] = []
+    for section in ["process_groups", "product_terms", "quantity_terms", "metric_terms", "status_terms"]:
+        for key, payload in data.get(section, {}).items():
+            docs.append(_doc(f"domain:{section}:{key}", path, {"section": section, "key": key, "payload": payload}))
+    docs.append(
+        _doc(
+            "domain:product_key_columns",
+            path,
+            {"section": "product_key_columns", "key": "product_key_columns", "columns": data.get("product_key_columns", [])},
+        )
+    )
+    return docs
+
+
+def _table_catalog_docs(path: Path) -> list[dict[str, Any]]:
+    data = _read_json(path)
+    docs = []
+    for dataset_key, payload in data.get("datasets", {}).items():
+        docs.append(_doc(f"table_catalog:{dataset_key}", path, {"dataset_key": dataset_key, "payload": payload}))
+    return docs
+
+
+def _main_flow_filter_docs(path: Path) -> list[dict[str, Any]]:
+    data = _read_json(path)
+    return [_doc(f"main_flow_filter:{key}", path, {"filter_key": key, "payload": payload}) for key, payload in data.items()]
+
+
+def _regression_question_docs(path: Path) -> list[dict[str, Any]]:
+    data = _read_json(path)
+    return [_doc(f"regression_question:{item['id']}", path, item) for item in data]
+
+
+def _sample_row_docs(path: Path) -> list[dict[str, Any]]:
+    data = _read_json(path)
+    docs = []
+    for index, row in enumerate(data):
+        row_hash = _stable_hash(row)
+        docs.append(
+            _doc(
+                f"sample:{path.stem}:{index}:{row_hash}",
+                path,
+                {"dataset_key": path.stem, "row_index": index, "row_hash": row_hash, **row},
+            )
+        )
+    return docs
+
+
+def _doc(doc_id: str, source_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"_id": doc_id, "_source_file": str(source_path), "_source_name": source_path.name, **payload}
+
+
+def _read_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def _stable_hash(value: Any) -> str:
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()[:12]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

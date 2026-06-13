@@ -1,0 +1,250 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+from copy import deepcopy
+from datetime import datetime, timezone
+from importlib import import_module
+from typing import Any
+
+from lfx.custom.custom_component.component import Component
+from lfx.io import DataInput, MessageTextInput, Output
+from lfx.schema.data import Data
+
+
+def review_and_write_domain_payload(
+    payload_value: Any,
+    llm_response_value: Any,
+    mongo_uri: str = "",
+    mongo_database: str = "",
+    collection_prefix: str = "",
+    collection_name: str = "",
+    duplicate_action: str = "",
+) -> dict[str, Any]:
+    payload = _payload(payload_value)
+    review = _normalize_review(_text(llm_response_value), payload)
+    action = _action(duplicate_action or (payload.get("duplicate_decision") or {}).get("action") or "ask")
+    config = payload.get("mongo_config") if isinstance(payload.get("mongo_config"), dict) else {}
+    database = _clean(mongo_database or config.get("database") or os.getenv("MONGODB_DATABASE") or "metadata_driven_agent_v2")
+    prefix = _clean(collection_prefix or config.get("collection_prefix") or os.getenv("MONGODB_COLLECTION_PREFIX") or "agent_v2")
+    collection = _clean(collection_name or config.get("collection") or f"{prefix}_domain_items")
+    uri = _clean(mongo_uri or os.getenv("MONGODB_URI"))
+
+    write_result = {"status": "skipped", "saved_count": 0, "saved_items": [], "errors": [], "skipped_reason": ""}
+    if action == "skip":
+        write_result["skipped_reason"] = "사용자가 duplicate_action=skip을 선택했습니다."
+    elif (payload.get("duplicate_decision") or {}).get("requires_user_choice") and action == "ask":
+        write_result["skipped_reason"] = "비슷한 기존 정보가 있어 merge/replace/skip/create_new 중 선택이 필요합니다."
+    elif not review.get("ready_to_save"):
+        write_result["skipped_reason"] = "검증 결과 저장할 수 없는 상태입니다."
+    elif not uri:
+        write_result["status"] = "error"
+        write_result["errors"].append("mongo_uri가 비어 있어 MongoDB에 저장하지 못했습니다.")
+    else:
+        write_result = _write_items(uri, database, collection, payload.get("items", []), action)
+
+    next_payload = dict(payload)
+    next_payload["review"] = review
+    next_payload["write_result"] = write_result
+    next_payload.setdefault("trace", {})["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+    return next_payload
+
+
+def _normalize_review(text: str, payload: dict[str, Any]) -> dict[str, Any]:
+    parsed = _extract_json_object(text)
+    supplement = _as_list(parsed.get("supplement_requests"))
+    if (payload.get("duplicate_decision") or {}).get("requires_user_choice"):
+        supplement.append(
+            {
+                "field": "duplicate_action",
+                "reason": "같은 key의 기존 domain 정보가 있어 저장 방식을 선택해야 합니다.",
+                "example_user_input": "merge, replace, skip, create_new 중 하나를 선택해 주세요.",
+            }
+        )
+    if not payload.get("items"):
+        supplement.append({"field": "items", "reason": "저장할 domain item이 없습니다.", "example_user_input": "추가할 용어와 의미를 설명해 주세요."})
+    errors = list(payload.get("errors", []))
+    ready = bool(parsed.get("ready_to_save", False)) and not supplement and not errors
+    return {
+        "ready_to_save": ready,
+        "summary": _clean(parsed.get("summary") or "검증 결과를 정리했습니다."),
+        "supplement_requests": supplement,
+        "item_reviews": _as_list(parsed.get("item_reviews")),
+        "normalizer_errors": errors,
+    }
+
+
+def _write_items(mongo_uri: str, database: str, collection: str, items: list[Any], action: str) -> dict[str, Any]:
+    result = {"status": "ok", "saved_count": 0, "saved_items": [], "errors": [], "skipped_reason": ""}
+    client = None
+    try:
+        mongo_client_cls = getattr(import_module("pymongo"), "MongoClient")
+        client = mongo_client_cls(mongo_uri, serverSelectionTimeoutMS=5000)
+        coll = client[database][collection]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            section = _clean(item.get("section"))
+            key = _clean(item.get("key"))
+            query = {"section": section, "key": key}
+            existing = coll.find_one(query)
+            if existing and action == "create_new":
+                result["errors"].append(f"{section}/{key}는 이미 존재합니다. create_new를 쓰려면 새 key가 필요합니다.")
+                continue
+            doc = _domain_doc(item)
+            if existing and action == "merge":
+                doc = _deep_merge(_json_ready(existing), doc)
+                doc["_id"] = existing.get("_id", doc["_id"])
+            coll.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+            result["saved_count"] += 1
+            result["saved_items"].append({"section": section, "key": key, "_id": doc["_id"]})
+    except Exception as exc:
+        result["status"] = "error"
+        result["errors"].append(str(exc))
+    finally:
+        if client is not None:
+            client.close()
+    if result["errors"] and result["saved_count"] == 0:
+        result["status"] = "error"
+    return result
+
+
+def _domain_doc(item: dict[str, Any]) -> dict[str, Any]:
+    section = _clean(item.get("section"))
+    key = _clean(item.get("key"))
+    doc = {
+        "_id": f"domain:{section}:{key}",
+        "section": section,
+        "key": key,
+        "status": _clean(item.get("status") or "active"),
+        "payload": deepcopy(item.get("payload")) if isinstance(item.get("payload"), dict) else {},
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if item.get("columns"):
+        doc["columns"] = _as_text_list(item.get("columns"))
+    return doc
+
+
+def _deep_merge(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in incoming.items():
+        if key == "_id":
+            continue
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        elif isinstance(value, list) and isinstance(merged.get(key), list):
+            merged[key] = _dedupe(merged[key] + value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _dedupe(values: list[Any]) -> list[Any]:
+    result = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    if fenced:
+        raw = fenced.group(1).strip()
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(raw[index:])
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _json_ready(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    return str(value)
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _as_text_list(value: Any) -> list[str]:
+    return [_clean(item) for item in _as_list(value) if _clean(item)]
+
+
+def _action(value: Any) -> str:
+    action = _clean(value).lower()
+    return action if action in {"ask", "merge", "replace", "skip", "create_new"} else "ask"
+
+
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    data = getattr(value, "data", None)
+    if isinstance(data, dict):
+        for key in ("llm_text", "text", "content", "response"):
+            if data.get(key):
+                return str(data[key])
+    for attr in ("text", "content"):
+        if getattr(value, attr, None):
+            return str(getattr(value, attr))
+    return str(value)
+
+
+def _payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    data = getattr(value, "data", None)
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
+
+
+class DomainReviewWriter(Component):
+    display_name = "07 Domain Review Writer"
+    description = "Normalizes the final review JSON and writes approved domain metadata to MongoDB."
+    inputs = [
+        DataInput(name="payload", display_name="Payload", required=True),
+        MessageTextInput(name="llm_response", display_name="Review LLM Response", required=True),
+        MessageTextInput(name="mongo_uri", display_name="Mongo URI", value="", advanced=True),
+        MessageTextInput(name="mongo_database", display_name="Mongo Database", value="", advanced=True),
+        MessageTextInput(name="collection_prefix", display_name="Collection Prefix", value="", advanced=True),
+        MessageTextInput(name="collection_name", display_name="Collection Name Override", value="", advanced=True),
+        MessageTextInput(name="duplicate_action", display_name="Duplicate Action Override", value="", advanced=True),
+    ]
+    outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]
+
+    def build_payload(self) -> Data:
+        result = review_and_write_domain_payload(
+            getattr(self, "payload", None),
+            getattr(self, "llm_response", ""),
+            getattr(self, "mongo_uri", ""),
+            getattr(self, "mongo_database", ""),
+            getattr(self, "collection_prefix", ""),
+            getattr(self, "collection_name", ""),
+            getattr(self, "duplicate_action", ""),
+        )
+        self.status = {
+            "ready": (result.get("review") or {}).get("ready_to_save", False),
+            "write_status": (result.get("write_result") or {}).get("status"),
+            "saved": (result.get("write_result") or {}).get("saved_count", 0),
+        }
+        return Data(data=result)

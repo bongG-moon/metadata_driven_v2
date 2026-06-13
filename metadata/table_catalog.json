@@ -1,0 +1,226 @@
+{
+  "datasets": {
+    "production_today": {
+      "display_name": "Production Today",
+      "dataset_family": "production",
+      "date_scope": "current_day",
+      "source_type": "oracle",
+      "source_config": {
+        "source_type": "oracle",
+        "db_key": "PNT_RPT",
+        "query_template": "SELECT WORK_DT, OPER_NAME, TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, TSV_DIE_TYP, PRODUCTION FROM PKG_PRODUCTION_TODAY WHERE WORK_DT = {DATE}"
+      },
+      "required_params": ["DATE"],
+      "required_param_mappings": {"DATE": ["WORK_DT"]},
+      "primary_quantity_column": "PRODUCTION",
+      "filter_mappings": {
+        "DATE": ["WORK_DT"],
+        "OPER_NAME": ["OPER_NAME"],
+        "MODE": ["MODE"],
+        "TECH": ["TECH"],
+        "DEN": ["DEN"],
+        "PKG_TYPE1": ["PKG_TYPE1"],
+        "PKG_TYPE2": ["PKG_TYPE2"],
+        "LEAD": ["LEAD"],
+        "MCP_NO": ["MCP_NO"],
+        "TSV_DIE_TYP": ["TSV_DIE_TYP"]
+      },
+      "columns": ["WORK_DT", "OPER_NAME", "TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "TSV_DIE_TYP", "PRODUCTION"]
+    },
+    "production": {
+      "display_name": "Production History",
+      "dataset_family": "production",
+      "date_scope": "history",
+      "source_type": "oracle",
+      "source_config": {
+        "source_type": "oracle",
+        "db_key": "PNT_RPT",
+        "query_template": "SELECT WORK_DT, OPER_NAME, TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, TSV_DIE_TYP, PRODUCTION FROM PKG_PRODUCTION_HISTORY"
+      },
+      "required_params": [],
+      "primary_quantity_column": "PRODUCTION",
+      "filter_mappings": {
+        "DATE": ["WORK_DT"],
+        "OPER_NAME": ["OPER_NAME"],
+        "MODE": ["MODE"],
+        "TECH": ["TECH"],
+        "DEN": ["DEN"],
+        "PKG_TYPE1": ["PKG_TYPE1"],
+        "PKG_TYPE2": ["PKG_TYPE2"],
+        "LEAD": ["LEAD"],
+        "MCP_NO": ["MCP_NO"],
+        "TSV_DIE_TYP": ["TSV_DIE_TYP"]
+      },
+      "columns": ["WORK_DT", "OPER_NAME", "TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "TSV_DIE_TYP", "PRODUCTION"]
+    },
+    "wip_today": {
+      "display_name": "WIP Today",
+      "dataset_family": "wip",
+      "date_scope": "current_day",
+      "source_type": "oracle",
+      "source_config": {
+        "source_type": "oracle",
+        "db_key": "PNT_RPT",
+        "query_template": "SELECT WORK_DT, OPER_NAME, TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, TSV_DIE_TYP, WIP FROM PKG_WIP_TODAY WHERE WORK_DT = {DATE}"
+      },
+      "required_params": ["DATE"],
+      "required_param_mappings": {"DATE": ["WORK_DT"]},
+      "primary_quantity_column": "WIP",
+      "filter_mappings": {
+        "DATE": ["WORK_DT"],
+        "OPER_NAME": ["OPER_NAME"],
+        "MODE": ["MODE"],
+        "TECH": ["TECH"],
+        "DEN": ["DEN"],
+        "PKG_TYPE1": ["PKG_TYPE1"],
+        "PKG_TYPE2": ["PKG_TYPE2"],
+        "LEAD": ["LEAD"],
+        "MCP_NO": ["MCP_NO"],
+        "TSV_DIE_TYP": ["TSV_DIE_TYP"]
+      },
+      "columns": ["WORK_DT", "OPER_NAME", "TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "TSV_DIE_TYP", "WIP"]
+    },
+    "wip": {
+      "display_name": "WIP History Snapshot",
+      "dataset_family": "wip",
+      "date_scope": "history",
+      "source_type": "oracle",
+      "source_config": {
+        "source_type": "oracle",
+        "db_key": "PNT_RPT",
+        "query_template": "SELECT WORK_DT, OPER_NAME, TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, TSV_DIE_TYP, WIP FROM PKG_WIP_HISTORY"
+      },
+      "required_params": [],
+      "primary_quantity_column": "WIP",
+      "filter_mappings": {
+        "DATE": ["WORK_DT"],
+        "OPER_NAME": ["OPER_NAME"],
+        "MODE": ["MODE"],
+        "TECH": ["TECH"],
+        "DEN": ["DEN"],
+        "PKG_TYPE1": ["PKG_TYPE1"],
+        "PKG_TYPE2": ["PKG_TYPE2"],
+        "LEAD": ["LEAD"],
+        "MCP_NO": ["MCP_NO"],
+        "TSV_DIE_TYP": ["TSV_DIE_TYP"]
+      },
+      "columns": ["WORK_DT", "OPER_NAME", "TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "TSV_DIE_TYP", "WIP"]
+    },
+    "target": {
+      "display_name": "Production Plan",
+      "dataset_family": "target",
+      "source_type": "goodocs",
+      "source_config": {
+        "source_type": "goodocs",
+        "doc_id": "GOODOCS_TARGET_PLAN_DOCUMENT_ID",
+        "sheet_name": "daily_target"
+      },
+      "required_params": [],
+      "date_format": "YYYY-MM-DD",
+      "primary_quantity_column": ["INPUT_PLAN", "OUT_PLAN"],
+      "filter_mappings": {
+        "DATE": ["DATE"],
+        "MODE": ["MODE"],
+        "TECH": ["TECH"],
+        "DEN": ["DEN"],
+        "PKG_TYPE1": ["PKG_TYPE1"],
+        "PKG_TYPE2": ["PKG_TYPE2"],
+        "LEAD": ["LEAD"],
+        "MCP_NO": ["MCP_NO"]
+      },
+      "columns": ["DATE", "TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "INPUT_PLAN", "OUT_PLAN"]
+    },
+    "lot_status": {
+      "display_name": "Lot Status",
+      "dataset_family": "lot",
+      "source_type": "oracle",
+      "source_config": {
+        "source_type": "oracle",
+        "db_key": "PNT_RPT",
+        "query_template": "SELECT LOT_ID, OPER_SHORT_DESC, LOT_STAT_CD, LOT_HOLD_STAT_CD, TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, SUB_PROD_QTY, WF_QTY, IN_TAT, CUM_TAT FROM PKG_LOT_STATUS"
+      },
+      "required_params": [],
+      "primary_quantity_column": ["SUB_PROD_QTY", "WF_QTY", "IN_TAT", "CUM_TAT"],
+      "filter_mappings": {
+        "LOT_ID": ["LOT_ID"],
+        "OPER_NAME": ["OPER_SHORT_DESC"],
+        "LOT_STAT_CD": ["LOT_STAT_CD"],
+        "LOT_HOLD_STAT_CD": ["LOT_HOLD_STAT_CD"],
+        "MODE": ["MODE"],
+        "TECH": ["TECH"],
+        "DEN": ["DEN"],
+        "PKG_TYPE1": ["PKG_TYPE1"],
+        "PKG_TYPE2": ["PKG_TYPE2"],
+        "LEAD": ["LEAD"],
+        "MCP_NO": ["MCP_NO"]
+      },
+      "default_detail_columns": ["LOT_ID", "OPER_SHORT_DESC", "LOT_STAT_CD", "LOT_HOLD_STAT_CD", "SUB_PROD_QTY", "WF_QTY", "IN_TAT", "CUM_TAT"],
+      "columns": ["LOT_ID", "OPER_SHORT_DESC", "LOT_STAT_CD", "LOT_HOLD_STAT_CD", "TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "SUB_PROD_QTY", "WF_QTY", "IN_TAT", "CUM_TAT"]
+    },
+    "hold_history": {
+      "display_name": "Hold History",
+      "dataset_family": "hold",
+      "source_type": "h_api",
+      "source_config": {
+        "source_type": "h_api",
+        "api_url": "https://h-api.example.invalid/lot/hold-history",
+        "response_path": "data.rows"
+      },
+      "required_params": ["LOT_ID"],
+      "required_param_mappings": {"LOT_ID": ["LOT_ID"]},
+      "filter_mappings": {"LOT_ID": ["LOT_ID"]},
+      "default_detail_columns": ["LOT_ID", "HOLD_TM", "HOLD_CD", "HOLD_DESC", "HOLD_USER_ID", "EVENT_CD"],
+      "columns": ["LOT_ID", "HOLD_TM", "HOLD_CD", "HOLD_DESC", "HOLD_USER_ID", "EVENT_CD"]
+    },
+    "equipment_status": {
+      "display_name": "Equipment Status",
+      "dataset_family": "equipment",
+      "source_type": "oracle",
+      "source_config": {
+        "source_type": "oracle",
+        "db_key": "PNT_RPT",
+        "query_template": "SELECT EQPID, EQP_MODEL, PRESS_CNT, MODE, TECH, DEN, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, LOT_ID, RECIPE_ID FROM PKG_EQUIPMENT_STATUS"
+      },
+      "required_params": [],
+      "primary_quantity_column": "PRESS_CNT",
+      "filter_mappings": {
+        "MODE": ["MODE"],
+        "TECH": ["TECH"],
+        "DEN": ["DEN"],
+        "PKG_TYPE1": ["PKG_TYPE1"],
+        "PKG_TYPE2": ["PKG_TYPE2"],
+        "LEAD": ["LEAD"],
+        "MCP_NO": ["MCP_NO"],
+        "EQP_ID": ["EQPID", "EQP_ID"],
+        "EQP_MODEL": ["EQP_MODEL"],
+        "LOT_ID": ["LOT_ID"],
+        "RECIPE_ID": ["RECIPE_ID"]
+      },
+      "default_detail_columns": ["EQPID", "EQP_MODEL", "PRESS_CNT", "MODE", "TECH", "DEN", "MCP_NO", "RECIPE_ID"],
+      "columns": ["EQPID", "EQP_MODEL", "PRESS_CNT", "MODE", "TECH", "DEN", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "LOT_ID", "RECIPE_ID"]
+    },
+    "capacity": {
+      "display_name": "Equipment Capacity",
+      "dataset_family": "capacity",
+      "source_type": "datalake",
+      "source_config": {
+        "source_type": "datalake",
+        "query_template": "SELECT BASE_DT, EQPID, EQP_MODEL, RECIPE_ID, AVG_UPH_VAL, MODE, TECH, DEN, MCP_NO FROM LAKEHOUSE_CAPACITY WHERE BASE_DT = {DATE}"
+      },
+      "required_params": [],
+      "primary_quantity_column": "AVG_UPH_VAL",
+      "filter_mappings": {
+        "DATE": ["BASE_DT"],
+        "EQP_ID": ["EQPID", "EQP_ID"],
+        "EQP_MODEL": ["EQP_MODEL"],
+        "RECIPE_ID": ["RECIPE_ID"],
+        "MODE": ["MODE"],
+        "TECH": ["TECH"],
+        "DEN": ["DEN"],
+        "MCP_NO": ["MCP_NO"]
+      },
+      "default_detail_columns": ["BASE_DT", "EQPID", "EQP_MODEL", "RECIPE_ID", "AVG_UPH_VAL", "MODE", "TECH", "DEN", "MCP_NO"],
+      "columns": ["BASE_DT", "EQPID", "EQP_MODEL", "RECIPE_ID", "AVG_UPH_VAL", "MODE", "TECH", "DEN", "MCP_NO"]
+    }
+  }
+}

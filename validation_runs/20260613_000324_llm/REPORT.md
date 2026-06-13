@@ -1,0 +1,56 @@
+# LLM In The Loop Validation Report
+
+- Passed: 1/1
+- LLM path: question -> Gemini intent JSON -> normalizer -> retrieval -> Gemini pandas code JSON -> safety check -> pandas execution -> answer
+
+## PASS multi_step_rank_wip_with_production
+
+- question: `오늘 DA, WB공정에서 각각 재공 상위 3개 제품을 뽑아주고 해당 제품들의 오늘 생산량도 보여줘`
+- answer: `6건을 찾았습니다. 사용 dataset: wip_today, production_today. 결과 예시: (RANK_GROUP=DA, TECH=TSV, DEN=1024G, MODE=HBM3, PKG_TYPE1=HBM); (RANK_GROUP=DA, TECH=TSV, DEN=1536G, MODE=HBM3, PKG_TYPE1=HBM); (RANK_GROUP=DA, TECH=TSV, DEN=2048G, MODE=HBM3E, PKG_TYPE1=HBM) 외 3건`
+- analysis_kind: `rank_wip_then_join_production`
+- datasets: `['wip_today', 'production_today']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `rank_wip_then_join_production`
+  - actual: `rank_wip_then_join_production`
+- PASS normalized_expected_analysis_kind
+  - expected: `rank_wip_then_join_production`
+  - actual: `rank_wip_then_join_production`
+- PASS llm_expected_datasets
+  - expected: `['production_today', 'wip_today']`
+  - actual: `['production_today', 'wip_today']`
+- PASS normalized_expected_datasets
+  - expected: `['production_today', 'wip_today']`
+  - actual: `['production_today', 'wip_today']`
+- PASS expected_columns
+  - expected: `['PRODUCTION', 'RANK_GROUP', 'WIP']`
+  - actual: `['RANK_GROUP', 'TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP', 'PRODUCTION']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `6`
+- PASS llm_expected_intent_type
+  - expected: `multi_step_analysis`
+  - actual: `multi_step_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `multi_step_analysis`
+  - actual: `multi_step_analysis`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+- PASS expected_params_by_dataset
+  - expected: `{'wip_today': {'DATE': '20260612'}, 'production_today': {'DATE': '20260612'}}`
+  - actual: `{'wip_today': [{'DATE': '20260612'}], 'production_today': [{'DATE': '20260612'}]}`
+- PASS rank_group_split
+  - expected: `['DA', 'WB']`
+  - actual: `['DA', 'WB']`

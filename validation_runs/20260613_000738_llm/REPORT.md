@@ -1,0 +1,752 @@
+# LLM In The Loop Validation Report
+
+- Passed: 16/16
+- LLM path: question -> Gemini intent JSON -> normalizer -> retrieval -> Gemini pandas code JSON -> safety check -> pandas execution -> answer
+
+## PASS multi_step_rank_wip_with_production
+
+- question: `오늘 DA, WB공정에서 각각 재공 상위 3개 제품을 뽑아주고 해당 제품들의 오늘 생산량도 보여줘`
+- answer: `6건을 찾았습니다. 사용 dataset: wip_today, production_today. 결과 예시: (RANK_GROUP=DA, TECH=TSV, DEN=1024G, MODE=HBM3, PKG_TYPE1=HBM); (RANK_GROUP=DA, TECH=TSV, DEN=1536G, MODE=HBM3, PKG_TYPE1=HBM); (RANK_GROUP=DA, TECH=TSV, DEN=2048G, MODE=HBM3E, PKG_TYPE1=HBM) 외 3건`
+- analysis_kind: `rank_wip_then_join_production`
+- datasets: `['wip_today', 'production_today']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `rank_wip_then_join_production`
+  - actual: `rank_wip_then_join_production`
+- PASS normalized_expected_analysis_kind
+  - expected: `rank_wip_then_join_production`
+  - actual: `rank_wip_then_join_production`
+- PASS llm_expected_datasets
+  - expected: `['production_today', 'wip_today']`
+  - actual: `['production_today', 'wip_today']`
+- PASS normalized_expected_datasets
+  - expected: `['production_today', 'wip_today']`
+  - actual: `['production_today', 'wip_today']`
+- PASS expected_columns
+  - expected: `['PRODUCTION', 'RANK_GROUP', 'WIP']`
+  - actual: `['RANK_GROUP', 'TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP', 'PRODUCTION']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `6`
+- PASS llm_expected_intent_type
+  - expected: `multi_step_analysis`
+  - actual: `multi_step_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `multi_step_analysis`
+  - actual: `multi_step_analysis`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+- PASS expected_params_by_dataset
+  - expected: `{'wip_today': {'DATE': '20260612'}, 'production_today': {'DATE': '20260612'}}`
+  - actual: `{'wip_today': [{'DATE': '20260612'}], 'production_today': [{'DATE': '20260612'}]}`
+- PASS rank_group_split
+  - expected: `['DA', 'WB']`
+  - actual: `['DA', 'WB']`
+
+## PASS hold_history_detail
+
+- question: `T1234567GEN1 LOT의 HOLD이력 알려줘`
+- answer: `2건을 찾았습니다. 사용 dataset: hold_history. 결과 예시: (LOT_ID=T1234567GEN1, HOLD_TM=2026-06-12 09:10:00, HOLD_CD=QA_HOLD, HOLD_DESC=QA review hold for HBM stack inspection, HOLD_USER_ID=qa_user); (LOT_ID=T1234567GEN1, HOLD_TM=2026-06-12 11:30:00, HOLD_CD=RECIPE_CHECK, HOLD_DESC=Recipe approval check, HOLD_USER_ID=process_eng)`
+- analysis_kind: `detail_rows`
+- datasets: `['hold_history']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `detail_rows`
+  - actual: `detail_rows`
+- PASS normalized_expected_analysis_kind
+  - expected: `detail_rows`
+  - actual: `detail_rows`
+- PASS llm_expected_datasets
+  - expected: `['hold_history']`
+  - actual: `['hold_history']`
+- PASS normalized_expected_datasets
+  - expected: `['hold_history']`
+  - actual: `['hold_history']`
+- PASS expected_columns
+  - expected: `['HOLD_CD', 'HOLD_DESC', 'HOLD_TM', 'LOT_ID']`
+  - actual: `['LOT_ID', 'HOLD_TM', 'HOLD_CD', 'HOLD_DESC', 'HOLD_USER_ID', 'EVENT_CD']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `2`
+- PASS llm_expected_intent_type
+  - expected: `detail_lookup`
+  - actual: `detail_lookup`
+- PASS normalized_expected_intent_type
+  - expected: `detail_lookup`
+  - actual: `detail_lookup`
+- PASS expected_filter_fields
+  - expected: `['LOT_ID']`
+  - actual: `['LOT_ID']`
+- PASS expected_params_by_dataset
+  - expected: `{'hold_history': {'LOT_ID': 'T1234567GEN1'}}`
+  - actual: `{'hold_history': [{'LOT_ID': 'T1234567GEN1'}]}`
+
+## PASS hold_lot_list
+
+- question: `현재 hold된 lot list 알려줘`
+- answer: `241건을 찾았습니다. 사용 dataset: lot_status. 결과 예시: (LOT_ID=T1234567GEN1, OPER_SHORT_DESC=D/A1, LOT_STAT_CD=RUNNING, LOT_HOLD_STAT_CD=HOLD, SUB_PROD_QTY=1200); (LOT_ID=LOT061200002, OPER_SHORT_DESC=D/A1, LOT_STAT_CD=WAITING, LOT_HOLD_STAT_CD=HOLD, SUB_PROD_QTY=1235); (LOT_ID=LOT061200005, OPER_SHORT_DESC=D/A1, LOT_STAT_CD=WAITING, LOT_HOLD_STAT_CD=HOLD, SUB_PROD_QTY=1386) 외 238건`
+- analysis_kind: `detail_rows`
+- datasets: `['lot_status']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `detail_rows`
+  - actual: `detail_rows`
+- PASS normalized_expected_analysis_kind
+  - expected: `detail_rows`
+  - actual: `detail_rows`
+- PASS llm_expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- PASS normalized_expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- PASS expected_columns
+  - expected: `['LOT_HOLD_STAT_CD', 'LOT_ID']`
+  - actual: `['LOT_ID', 'OPER_SHORT_DESC', 'LOT_STAT_CD', 'LOT_HOLD_STAT_CD', 'SUB_PROD_QTY', 'WF_QTY', 'IN_TAT', 'CUM_TAT']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `241`
+- PASS llm_expected_intent_type
+  - expected: `detail_lookup`
+  - actual: `detail_lookup`
+- PASS normalized_expected_intent_type
+  - expected: `detail_lookup`
+  - actual: `detail_lookup`
+- PASS expected_filter_fields
+  - expected: `['LOT_HOLD_STAT_CD']`
+  - actual: `['LOT_HOLD_STAT_CD']`
+
+## PASS da_wip_top_product
+
+- question: `현재 da에서 재공이 가장 많은 제품 알려줘`
+- answer: `1건을 찾았습니다. 사용 dataset: wip_today. 결과 예시: (TECH=TSV, DEN=2048G, MODE=HBM3E, PKG_TYPE1=HBM, PKG_TYPE2=HBM)`
+- analysis_kind: `rank_top_n`
+- datasets: `['wip_today']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `rank_top_n`
+  - actual: `rank_top_n`
+- PASS normalized_expected_analysis_kind
+  - expected: `rank_top_n`
+  - actual: `rank_top_n`
+- PASS llm_expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- PASS normalized_expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- PASS expected_columns
+  - expected: `['WIP']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS llm_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+
+## PASS followup_equipment_for_product
+
+- question: `이 제품에 할당된 장비 현황 알려줘`
+- answer: `3건을 찾았습니다. 사용 dataset: equipment_status. 결과 예시: (EQPID=EQP1001, EQP_MODEL=DA-HBM-A, PRESS_CNT=1, TECH=TSV, DEN=2048G); (EQPID=EQP1002, EQP_MODEL=DA-HBM-B, PRESS_CNT=2, TECH=TSV, DEN=2048G); (EQPID=EQP1003, EQP_MODEL=DA-HBM-C, PRESS_CNT=3, TECH=TSV, DEN=2048G)`
+- analysis_kind: `equipment_for_previous_products`
+- datasets: `['equipment_status']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `equipment_for_previous_products`
+  - actual: `equipment_for_previous_products`
+- PASS normalized_expected_analysis_kind
+  - expected: `equipment_for_previous_products`
+  - actual: `equipment_for_previous_products`
+- PASS llm_expected_datasets
+  - expected: `['equipment_status']`
+  - actual: `['equipment_status']`
+- PASS normalized_expected_datasets
+  - expected: `['equipment_status']`
+  - actual: `['equipment_status']`
+- PASS expected_columns
+  - expected: `['EQPID', 'EQP_MODEL']`
+  - actual: `['EQPID', 'EQP_MODEL', 'PRESS_CNT', 'TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'LOT_ID', 'RECIPE_ID']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `3`
+- PASS llm_expected_intent_type
+  - expected: `followup_transform`
+  - actual: `followup_transform`
+- PASS normalized_expected_intent_type
+  - expected: `followup_transform`
+  - actual: `followup_transform`
+- PASS expected_filter_fields
+  - expected: `['PRODUCT_GRAIN']`
+  - actual: `['PRODUCT_GRAIN']`
+- PASS followup_uses_state
+  - expected: `state_product_keys not empty`
+  - actual: `[{'TECH': 'TSV', 'DEN': '2048G', 'MODE': 'HBM3E', 'PKG_TYPE1': 'HBM', 'PKG_TYPE2': 'HBM', 'LEAD': 'LF', 'MCP_NO': 'H-HBM16E'}]`
+
+## PASS lpddr5_wb_production_and_wip
+
+- question: `현재 MODE값이 LPDDR5인 제품의 W/B공정에서 생산량과 재공 수량 알려줘`
+- answer: `3건을 찾았습니다. 사용 dataset: production_today, wip_today. 결과 예시: (TECH=FC, DEN=128G, MODE=LPDDR5, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE); (TECH=FC, DEN=256G, MODE=LPDDR5, PKG_TYPE1=LFBGA, PKG_TYPE2=EDGE); (TECH=FC, DEN=64G, MODE=LPDDR5, PKG_TYPE1=LFBGA, PKG_TYPE2=POP)`
+- analysis_kind: `aggregate_join`
+- datasets: `['production_today', 'wip_today']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `aggregate_join`
+  - actual: `aggregate_join`
+- PASS normalized_expected_analysis_kind
+  - expected: `aggregate_join`
+  - actual: `aggregate_join`
+- PASS llm_expected_datasets
+  - expected: `['production_today', 'wip_today']`
+  - actual: `['production_today', 'wip_today']`
+- PASS normalized_expected_datasets
+  - expected: `['production_today', 'wip_today']`
+  - actual: `['production_today', 'wip_today']`
+- PASS expected_columns
+  - expected: `['PRODUCTION', 'WIP']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'WIP']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `3`
+- PASS llm_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_filter_fields
+  - expected: `['MODE', 'OPER_NAME']`
+  - actual: `['MODE', 'OPER_NAME']`
+
+## PASS today_da_wip_production_target_rate
+
+- question: `오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성율을 보여줘`
+- answer: `16건을 찾았습니다. 사용 dataset: production_today, wip_today, target. 결과 예시: (TECH=FC, DEN=128G, MODE=LPDDR5, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE); (TECH=FC, DEN=256G, MODE=LPDDR5, PKG_TYPE1=LFBGA, PKG_TYPE2=EDGE); (TECH=FC, DEN=256G, MODE=LPDDR5X, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE) 외 13건`
+- analysis_kind: `production_wip_target_rate`
+- datasets: `['production_today', 'wip_today', 'target']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `production_wip_target_rate`
+  - actual: `production_wip_target_rate`
+- PASS normalized_expected_analysis_kind
+  - expected: `production_wip_target_rate`
+  - actual: `production_wip_target_rate`
+- PASS llm_expected_datasets
+  - expected: `['production_today', 'target', 'wip_today']`
+  - actual: `['production_today', 'target', 'wip_today']`
+- PASS normalized_expected_datasets
+  - expected: `['production_today', 'target', 'wip_today']`
+  - actual: `['production_today', 'target', 'wip_today']`
+- PASS expected_columns
+  - expected: `['ACHIEVEMENT_RATE', 'OUT_PLAN', 'PRODUCTION', 'WIP']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP', 'PRODUCTION', 'OUT_PLAN', 'ACHIEVEMENT_RATE']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `16`
+- PASS llm_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME', 'DATE']`
+  - actual: `['DATE', 'OPER_NAME']`
+
+## PASS da1_low_output_vs_target
+
+- question: `오늘 D/A1공정에서 목표값 대비해서 생산량이 저조한 제품을 알려줘`
+- answer: `16건을 찾았습니다. 사용 dataset: production_today, target. 결과 예시: (TECH=FC, DEN=128G, MODE=LPDDR5, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE); (TECH=FC, DEN=256G, MODE=LPDDR5, PKG_TYPE1=LFBGA, PKG_TYPE2=EDGE); (TECH=FC, DEN=256G, MODE=LPDDR5X, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE) 외 13건`
+- analysis_kind: `low_output_vs_target`
+- datasets: `['production_today', 'target']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `low_output_vs_target`
+  - actual: `low_output_vs_target`
+- PASS normalized_expected_analysis_kind
+  - expected: `low_output_vs_target`
+  - actual: `low_output_vs_target`
+- PASS llm_expected_datasets
+  - expected: `['production_today', 'target']`
+  - actual: `['production_today', 'target']`
+- PASS normalized_expected_datasets
+  - expected: `['production_today', 'target']`
+  - actual: `['production_today', 'target']`
+- PASS expected_columns
+  - expected: `['ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG', 'PRODUCTION', 'TARGET_QTY']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'TARGET_QTY', 'ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `16`
+- PASS llm_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME', 'DATE']`
+  - actual: `['DATE', 'OPER_NAME']`
+
+## PASS input_plan_vs_da_low_output
+
+- question: `오늘 INPUT계획대비 D/A공정에서 생산량이 저조한 제품을 알려줘`
+- answer: `16건을 찾았습니다. 사용 dataset: production_today, target. 결과 예시: (TECH=FC, DEN=128G, MODE=LPDDR5, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE); (TECH=FC, DEN=256G, MODE=LPDDR5, PKG_TYPE1=LFBGA, PKG_TYPE2=EDGE); (TECH=FC, DEN=256G, MODE=LPDDR5X, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE) 외 13건`
+- analysis_kind: `low_output_vs_target`
+- datasets: `['production_today', 'target']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `low_output_vs_target`
+  - actual: `low_output_vs_target`
+- PASS normalized_expected_analysis_kind
+  - expected: `low_output_vs_target`
+  - actual: `low_output_vs_target`
+- PASS llm_expected_datasets
+  - expected: `['production_today', 'target']`
+  - actual: `['production_today', 'target']`
+- PASS normalized_expected_datasets
+  - expected: `['production_today', 'target']`
+  - actual: `['production_today', 'target']`
+- PASS expected_columns
+  - expected: `['ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG', 'PRODUCTION', 'TARGET_QTY']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'TARGET_QTY', 'ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `16`
+- PASS llm_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME', 'DATE']`
+  - actual: `['DATE', 'OPER_NAME']`
+
+## PASS waiting_lot_count_by_process
+
+- question: `현재 작업대기 Lot 수량을 공정별로 알려줘`
+- answer: `20건을 찾았습니다. 사용 dataset: lot_status. 결과 예시: (OPER_SHORT_DESC=B/G1, LOT_COUNT=24); (OPER_SHORT_DESC=B/G2, LOT_COUNT=24); (OPER_SHORT_DESC=D/A1, LOT_COUNT=24) 외 17건`
+- analysis_kind: `lot_count_by_process`
+- datasets: `['lot_status']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `lot_count_by_process`
+  - actual: `lot_count_by_process`
+- PASS normalized_expected_analysis_kind
+  - expected: `lot_count_by_process`
+  - actual: `lot_count_by_process`
+- PASS llm_expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- PASS normalized_expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- PASS expected_columns
+  - expected: `['LOT_COUNT', 'OPER_SHORT_DESC']`
+  - actual: `['OPER_SHORT_DESC', 'LOT_COUNT']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `20`
+- PASS llm_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_filter_fields
+  - expected: `['LOT_STAT_CD']`
+  - actual: `['LOT_STAT_CD']`
+
+## PASS da_lot_wafer_die_summary
+
+- question: `현재 DA공정에서 재공 lot이 몇개인지, wafer가 몇개인지, die수량은 몇개인지 알려줘`
+- answer: `1건을 찾았습니다. 사용 dataset: lot_status. 결과 예시: (LOT_COUNT=145, WF_QTY=2833, DIE_QTY=139062)`
+- analysis_kind: `lot_quantity_summary`
+- datasets: `['lot_status']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `lot_quantity_summary`
+  - actual: `lot_quantity_summary`
+- PASS normalized_expected_analysis_kind
+  - expected: `lot_quantity_summary`
+  - actual: `lot_quantity_summary`
+- PASS llm_expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- PASS normalized_expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- PASS expected_columns
+  - expected: `['DIE_QTY', 'LOT_COUNT', 'WF_QTY']`
+  - actual: `['LOT_COUNT', 'WF_QTY', 'DIE_QTY']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS llm_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+
+## PASS da_wip_quantity_uses_wip_dataset
+
+- question: `현재 DA공정 재공 수량 알려줘`
+- answer: `1건을 찾았습니다. 사용 dataset: wip_today. 결과 예시: (SCOPE=DA, WIP=4723559)`
+- analysis_kind: `aggregate_wip_total`
+- datasets: `['wip_today']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `aggregate_wip_total`
+  - actual: `aggregate_wip_total`
+- PASS normalized_expected_analysis_kind
+  - expected: `aggregate_wip_total`
+  - actual: `aggregate_wip_total`
+- PASS llm_expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- PASS normalized_expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- PASS expected_columns
+  - expected: `['SCOPE', 'WIP']`
+  - actual: `['SCOPE', 'WIP']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS llm_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+- PASS forbidden_filter_fields
+  - expected: `not present: ['LOT_STAT_CD', 'LOT_HOLD_STAT_CD']`
+  - actual: `[]`
+
+## PASS overall_wip_scope_reset_after_da
+
+- question: `전체 재공 수량 알려줘`
+- answer: `1건을 찾았습니다. 사용 dataset: wip_today. 결과 예시: (SCOPE=ALL, WIP=17170117)`
+- analysis_kind: `aggregate_wip_total`
+- datasets: `['wip_today']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `aggregate_wip_total`
+  - actual: `aggregate_wip_total`
+- PASS normalized_expected_analysis_kind
+  - expected: `aggregate_wip_total`
+  - actual: `aggregate_wip_total`
+- PASS llm_expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- PASS normalized_expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- PASS expected_columns
+  - expected: `['SCOPE', 'WIP']`
+  - actual: `['SCOPE', 'WIP']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS llm_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS forbidden_filter_fields
+  - expected: `not present: ['OPER_NAME', 'LOT_STAT_CD', 'LOT_HOLD_STAT_CD']`
+  - actual: `[]`
+
+## PASS today_total_production_wip_target
+
+- question: `오늘 생산량/재공/목표 값을 보여줘`
+- answer: `1건을 찾았습니다. 사용 dataset: production_today, wip_today, target. 결과 예시: (PRODUCTION=10068792, WIP=17170117, OUT_PLAN=531110)`
+- analysis_kind: `overall_production_wip_target`
+- datasets: `['production_today', 'wip_today', 'target']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `overall_production_wip_target`
+  - actual: `overall_production_wip_target`
+- PASS normalized_expected_analysis_kind
+  - expected: `overall_production_wip_target`
+  - actual: `overall_production_wip_target`
+- PASS llm_expected_datasets
+  - expected: `['production_today', 'target', 'wip_today']`
+  - actual: `['production_today', 'target', 'wip_today']`
+- PASS normalized_expected_datasets
+  - expected: `['production_today', 'target', 'wip_today']`
+  - actual: `['production_today', 'target', 'wip_today']`
+- PASS expected_columns
+  - expected: `['OUT_PLAN', 'PRODUCTION', 'WIP']`
+  - actual: `['PRODUCTION', 'WIP', 'OUT_PLAN']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS llm_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+
+## PASS yesterday_production_today_plan_gap
+
+- question: `어제 생산량과 오늘 생산계획의 차이수량을 제품별로 알려줘`
+- answer: `16건을 찾았습니다. 사용 dataset: production, target. 결과 예시: (TECH=FC, DEN=128G, MODE=LPDDR5, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE); (TECH=FC, DEN=256G, MODE=LPDDR5, PKG_TYPE1=LFBGA, PKG_TYPE2=EDGE); (TECH=FC, DEN=256G, MODE=LPDDR5X, PKG_TYPE1=UFBGA, PKG_TYPE2=MOBILE) 외 13건`
+- analysis_kind: `date_split_production_plan_gap`
+- datasets: `['production', 'target']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `date_split_production_plan_gap`
+  - actual: `date_split_production_plan_gap`
+- PASS normalized_expected_analysis_kind
+  - expected: `date_split_production_plan_gap`
+  - actual: `date_split_production_plan_gap`
+- PASS llm_expected_datasets
+  - expected: `['production', 'target']`
+  - actual: `['production', 'target']`
+- PASS normalized_expected_datasets
+  - expected: `['production', 'target']`
+  - actual: `['production', 'target']`
+- PASS expected_columns
+  - expected: `['BALANCE', 'OUT_PLAN', 'PRODUCTION']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'OUT_PLAN', 'BALANCE']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `16`
+- PASS llm_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_filter_fields
+  - expected: `['DATE']`
+  - actual: `['DATE']`
+
+## PASS hbm_equipment_by_model
+
+- question: `오늘 HBM 장비 보유 현황을 EQP_MODEL별로 알려줘`
+- answer: `3건을 찾았습니다. 사용 dataset: equipment_status. 결과 예시: (EQP_MODEL=DA-HBM-A, EQP_COUNT=4, PRESS_CNT=4); (EQP_MODEL=DA-HBM-B, EQP_COUNT=4, PRESS_CNT=8); (EQP_MODEL=DA-HBM-C, EQP_COUNT=4, PRESS_CNT=12)`
+- analysis_kind: `equipment_by_model`
+- datasets: `['equipment_status']`
+- PASS intent_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_llm_invoked
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_safety_passed
+  - expected: `True`
+  - actual: `True`
+- PASS pandas_code_executed
+  - expected: `True`
+  - actual: `True`
+- PASS llm_expected_analysis_kind
+  - expected: `equipment_by_model`
+  - actual: `equipment_by_model`
+- PASS normalized_expected_analysis_kind
+  - expected: `equipment_by_model`
+  - actual: `equipment_by_model`
+- PASS llm_expected_datasets
+  - expected: `['equipment_status']`
+  - actual: `['equipment_status']`
+- PASS normalized_expected_datasets
+  - expected: `['equipment_status']`
+  - actual: `['equipment_status']`
+- PASS expected_columns
+  - expected: `['EQP_COUNT', 'EQP_MODEL', 'PRESS_CNT']`
+  - actual: `['EQP_MODEL', 'EQP_COUNT', 'PRESS_CNT']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `3`
+- PASS llm_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS normalized_expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_filter_fields
+  - expected: `['PKG_TYPE1']`
+  - actual: `['PKG_TYPE1']`
