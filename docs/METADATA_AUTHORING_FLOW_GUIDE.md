@@ -5,6 +5,9 @@
 > - `langflow_components/domain_authoring_flow/CONNECTION_GUIDE.md`
 > - `langflow_components/table_catalog_authoring_flow/CONNECTION_GUIDE.md`
 > - `langflow_components/main_flow_filters_authoring_flow/CONNECTION_GUIDE.md`
+>
+> 현업 작업자가 그대로 복사해 넣을 수 있는 자연어 입력 예시는
+> `docs/METADATA_TEXT_INPUT_EXAMPLES.md`에 따로 정리되어 있습니다.
 
 이 문서는 현업 작업자가 코딩이나 Langflow flow 수정을 하지 않고도 자연어 설명으로 `domain`, `table_catalog`, `main_flow_filters` metadata를 MongoDB에 등록할 수 있게 만드는 authoring flow 구현 가이드다.
 
