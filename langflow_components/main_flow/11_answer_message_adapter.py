@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -17,7 +18,7 @@ CODE_TEXT_LIMIT = 4000
 
 def build_playground_message(payload_value: Any) -> str:
     payload = _payload(payload_value)
-    answer = str(payload.get("answer_message") or "").strip()
+    answer = _escape_markdown_tilde(str(payload.get("answer_message") or "").strip())
     if not payload:
         return ""
 
@@ -207,7 +208,11 @@ def _escape_table_cell(value: Any) -> str:
     else:
         text = "" if value is None else str(value)
     text = _truncate(text.replace("\n", "<br>"), CELL_TEXT_LIMIT)
-    return text.replace("|", "\\|")
+    return _escape_markdown_tilde(text.replace("|", "\\|"))
+
+
+def _escape_markdown_tilde(text: str) -> str:
+    return re.sub(r"(?<!\\)~", r"\\~", text)
 
 
 def _step_label(step: Any) -> str:

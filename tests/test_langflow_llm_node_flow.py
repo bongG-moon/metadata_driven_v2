@@ -177,3 +177,20 @@ def test_pandas_executor_normalizes_llm_result_column_names() -> None:
     assert result["analysis"]["columns"] == ["RANK_GROUP", "WIP_RANK", "MODE", "WIP", "PRODUCTION"]
     assert result["analysis"]["rows"][0]["WIP_RANK"] == 1
     assert result["analysis"]["rows"][0]["PRODUCTION"] == 7
+
+
+def test_answer_message_adapter_escapes_tilde_strikethrough_markdown() -> None:
+    answer_message_adapter = load_component("langflow_components/main_flow/11_answer_message_adapter.py")
+    payload = {
+        "answer_message": "결과는 ~~HOLD~~ 상태로 표시됩니다.",
+        "data": {
+            "columns": ["STATUS"],
+            "rows": [{"STATUS": "~~HOLD~~"}],
+            "row_count": 1,
+        },
+    }
+
+    message = answer_message_adapter.build_playground_message(payload)
+
+    assert "\\~\\~HOLD\\~\\~" in message
+    assert "~~HOLD~~" not in message
