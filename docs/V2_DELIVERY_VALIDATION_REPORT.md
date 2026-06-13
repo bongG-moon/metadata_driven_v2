@@ -39,7 +39,7 @@ Dry-run target database: `datagov`
 - `agent_v2_table_catalog_items`: 9 docs
 - `agent_v2_main_flow_filters`: 18 docs
 
-`agent_v2` collection prefix는 복사된 `.env`와 기존 metadata loader 계약을 따른다.
+MongoDB metadata collection은 prefix 조합 대신 full name 3개(`agent_v2_domain_items`, `agent_v2_table_catalog_items`, `agent_v2_main_flow_filters`)를 직접 입력하는 계약을 따른다.
 
 ## 주요 회귀 질문 범위
 

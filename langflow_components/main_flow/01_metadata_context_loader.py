@@ -21,6 +21,24 @@ CORE_DOMAIN_SECTIONS = {
     "status_terms",
 }
 
+DEFAULT_COLLECTIONS = {
+    "domain_items": "agent_v2_domain_items",
+    "table_catalog": "agent_v2_table_catalog_items",
+    "main_flow_filters": "agent_v2_main_flow_filters",
+}
+
+COLLECTION_ENV_KEYS = {
+    "domain_items": "MONGODB_DOMAIN_COLLECTION",
+    "table_catalog": "MONGODB_TABLE_CATALOG_COLLECTION",
+    "main_flow_filters": "MONGODB_MAIN_FLOW_FILTER_COLLECTION",
+}
+
+LEGACY_COLLECTION_SUFFIXES = {
+    "domain_items": "domain_items",
+    "table_catalog": "table_catalog_items",
+    "main_flow_filters": "main_flow_filters",
+}
+
 
 def load_metadata_payload(
     payload: dict[str, Any],
@@ -30,17 +48,25 @@ def load_metadata_payload(
     metadata_source: str = "mongodb",
     metadata_dir: str = "",
     load_limit: str = "1000",
+    domain_collection_name: str = "",
+    table_catalog_collection_name: str = "",
+    main_flow_filter_collection_name: str = "",
 ) -> dict[str, Any]:
     source_mode = _clean_text(metadata_source or os.getenv("METADATA_SOURCE") or "mongodb").lower()
     mongo_uri = _clean_text(mongo_uri or os.getenv("MONGODB_URI"))
     mongo_database = _clean_text(mongo_database or os.getenv("MONGODB_DATABASE") or "metadata_driven_agent_v2")
-    collection_prefix = _clean_text(collection_prefix or os.getenv("MONGODB_COLLECTION_PREFIX") or "agent_v2")
+    collections = _metadata_collections(
+        domain_collection_name,
+        table_catalog_collection_name,
+        main_flow_filter_collection_name,
+        collection_prefix,
+    )
     limit = _safe_int(load_limit, default=1000)
 
     metadata: dict[str, Any]
     load_info: dict[str, Any]
     if source_mode in {"mongodb", "mongo", "auto"}:
-        metadata, load_info = load_metadata_from_mongodb(mongo_uri, mongo_database, collection_prefix, limit)
+        metadata, load_info = load_metadata_from_mongodb(mongo_uri, mongo_database, collections, limit)
         if not load_info["errors"] and _metadata_has_core_items(metadata):
             return _attach_metadata(payload, metadata, load_info)
         if source_mode in {"mongodb", "mongo"} and not metadata_dir:
@@ -56,8 +82,7 @@ def load_metadata_payload(
         "source": source_mode,
         "loaded_at": _now_iso(),
         "database": mongo_database,
-        "collection_prefix": collection_prefix,
-        "collections": {},
+        "collections": collections,
         "counts": _metadata_counts(_empty_metadata()),
         "errors": ["No MongoDB metadata was loaded and metadata_dir is empty."],
     }
@@ -67,7 +92,7 @@ def load_metadata_payload(
 def load_metadata_from_mongodb(
     mongo_uri: str,
     mongo_database: str,
-    collection_prefix: str,
+    collections: dict[str, str],
     limit: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     metadata = _empty_metadata()
@@ -77,20 +102,16 @@ def load_metadata_from_mongodb(
         "table_catalog": [],
         "main_flow_filters": [],
     }
-    collections = {
-        "domain_items": f"{collection_prefix}_domain_items",
-        "table_catalog": f"{collection_prefix}_table_catalog_items",
-        "main_flow_filters": f"{collection_prefix}_main_flow_filters",
-    }
 
     if not mongo_uri:
         errors.append("mongo_uri is empty. Set the input value or MONGODB_URI.")
     if not mongo_database:
         errors.append("mongo_database is empty. Set the input value or MONGODB_DATABASE.")
-    if not collection_prefix:
-        errors.append("collection_prefix is empty. Set the input value or MONGODB_COLLECTION_PREFIX.")
+    missing_collections = [kind for kind, name in collections.items() if not _clean_text(name)]
+    if missing_collections:
+        errors.append("collection names are empty: " + ", ".join(missing_collections))
     if errors:
-        return metadata, _load_info("mongodb", mongo_database, collection_prefix, collections, metadata, errors)
+        return metadata, _load_info("mongodb", mongo_database, collections, metadata, errors)
 
     client = None
     try:
@@ -112,7 +133,7 @@ def load_metadata_from_mongodb(
             docs_by_kind["table_catalog"],
             docs_by_kind["main_flow_filters"],
         )
-    return metadata, _load_info("mongodb", mongo_database, collection_prefix, collections, metadata, errors, docs_by_kind)
+    return metadata, _load_info("mongodb", mongo_database, collections, metadata, errors, docs_by_kind)
 
 
 def load_metadata_from_local_files(metadata_dir: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -227,10 +248,33 @@ def _metadata_counts(metadata: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _metadata_collections(
+    domain_collection_name: str = "",
+    table_catalog_collection_name: str = "",
+    main_flow_filter_collection_name: str = "",
+    collection_prefix: str = "",
+) -> dict[str, str]:
+    raw_inputs = {
+        "domain_items": domain_collection_name,
+        "table_catalog": table_catalog_collection_name,
+        "main_flow_filters": main_flow_filter_collection_name,
+    }
+    legacy_prefix = _clean_text(collection_prefix or os.getenv("MONGODB_COLLECTION_PREFIX"))
+    collections: dict[str, str] = {}
+    for kind, default_collection in DEFAULT_COLLECTIONS.items():
+        explicit = _clean_text(raw_inputs.get(kind) or os.getenv(COLLECTION_ENV_KEYS[kind]))
+        if explicit:
+            collections[kind] = explicit
+        elif legacy_prefix:
+            collections[kind] = f"{legacy_prefix}_{LEGACY_COLLECTION_SUFFIXES[kind]}"
+        else:
+            collections[kind] = default_collection
+    return collections
+
+
 def _load_info(
     source: str,
     database: str,
-    collection_prefix: str,
     collections: dict[str, str],
     metadata: dict[str, Any],
     errors: list[str],
@@ -241,7 +285,6 @@ def _load_info(
         "source": source,
         "loaded_at": _now_iso(),
         "database": database,
-        "collection_prefix": collection_prefix,
         "collections": collections,
         "document_counts": document_counts,
         "counts": _metadata_counts(metadata),
@@ -254,7 +297,6 @@ def _compact_load_info(load_info: dict[str, Any]) -> dict[str, Any]:
         "source": load_info.get("source"),
         "loaded_at": load_info.get("loaded_at"),
         "database": load_info.get("database"),
-        "collection_prefix": load_info.get("collection_prefix"),
         "collections": load_info.get("collections", {}),
         "document_counts": load_info.get("document_counts", {}),
         "counts": load_info.get("counts", {}),
@@ -313,7 +355,17 @@ class MetadataContextLoader(Component):
         DataInput(name="payload", display_name="Payload", required=True),
         MessageTextInput(name="mongo_uri", display_name="Mongo URI", value=""),
         MessageTextInput(name="mongo_database", display_name="Mongo Database", value="metadata_driven_agent_v2"),
-        MessageTextInput(name="collection_prefix", display_name="Collection Prefix", value="agent_v2"),
+        MessageTextInput(name="domain_collection_name", display_name="Domain Collection Name", value=DEFAULT_COLLECTIONS["domain_items"]),
+        MessageTextInput(
+            name="table_catalog_collection_name",
+            display_name="Table Catalog Collection Name",
+            value=DEFAULT_COLLECTIONS["table_catalog"],
+        ),
+        MessageTextInput(
+            name="main_flow_filter_collection_name",
+            display_name="Main Flow Filter Collection Name",
+            value=DEFAULT_COLLECTIONS["main_flow_filters"],
+        ),
         MessageTextInput(name="metadata_source", display_name="Metadata Source", value="mongodb", advanced=True),
         MessageTextInput(name="metadata_dir", display_name="Local Metadata Directory", value="", advanced=True),
         MessageTextInput(name="load_limit", display_name="Load Limit", value="1000", advanced=True),
@@ -326,10 +378,13 @@ class MetadataContextLoader(Component):
             payload,
             getattr(self, "mongo_uri", ""),
             getattr(self, "mongo_database", ""),
-            getattr(self, "collection_prefix", ""),
-            getattr(self, "metadata_source", "mongodb"),
-            getattr(self, "metadata_dir", ""),
-            getattr(self, "load_limit", "1000"),
+            collection_prefix="",
+            metadata_source=getattr(self, "metadata_source", "mongodb"),
+            metadata_dir=getattr(self, "metadata_dir", ""),
+            load_limit=getattr(self, "load_limit", "1000"),
+            domain_collection_name=getattr(self, "domain_collection_name", ""),
+            table_catalog_collection_name=getattr(self, "table_catalog_collection_name", ""),
+            main_flow_filter_collection_name=getattr(self, "main_flow_filter_collection_name", ""),
         )
         load_info = result.get("metadata_context", {}).get("metadata_load", {})
         self.status = {

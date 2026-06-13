@@ -55,12 +55,21 @@ def test_metadata_loader_uses_local_fallback_when_auto_mongo_is_empty() -> None:
         mongo_uri="",
         metadata_source="auto",
         metadata_dir=str(ROOT / "metadata"),
+        domain_collection_name="factory_domain_metadata",
+        table_catalog_collection_name="factory_table_catalog_metadata",
+        main_flow_filter_collection_name="factory_filter_metadata",
     )
 
     assert payload["metadata"]["domain_items"]["product_key_columns"]
     assert payload["metadata"]["table_catalog"]["datasets"]
     assert payload["metadata_context"]["metadata_load"]["source"] == "local_json"
-    assert payload["metadata_context"]["metadata_load"]["fallback_from"]["source"] == "mongodb"
+    fallback = payload["metadata_context"]["metadata_load"]["fallback_from"]
+    assert fallback["source"] == "mongodb"
+    assert fallback["collections"] == {
+        "domain_items": "factory_domain_metadata",
+        "table_catalog": "factory_table_catalog_metadata",
+        "main_flow_filters": "factory_filter_metadata",
+    }
 
 
 def _load_metadata_loader():
@@ -70,4 +79,3 @@ def _load_metadata_loader():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-

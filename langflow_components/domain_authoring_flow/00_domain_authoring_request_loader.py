@@ -20,6 +20,10 @@ DOMAIN_SECTIONS = {
     "product_key_columns",
 }
 
+DEFAULT_COLLECTION_NAME = "agent_v2_domain_items"
+COLLECTION_ENV_KEY = "MONGODB_DOMAIN_COLLECTION"
+LEGACY_COLLECTION_SUFFIX = "domain_items"
+
 
 def build_domain_authoring_request(
     raw_text: Any,
@@ -32,8 +36,7 @@ def build_domain_authoring_request(
     load_limit: str = "200",
 ) -> dict[str, Any]:
     database = _clean(mongo_database or os.getenv("MONGODB_DATABASE") or "metadata_driven_agent_v2")
-    prefix = _clean(collection_prefix or os.getenv("MONGODB_COLLECTION_PREFIX") or "agent_v2")
-    collection = _clean(collection_name or f"{prefix}_domain_items")
+    collection = _resolve_collection_name(collection_name, collection_prefix)
     uri = _clean(mongo_uri or os.getenv("MONGODB_URI"))
     existing_items = []
     load_errors: list[str] = []
@@ -54,7 +57,6 @@ def build_domain_authoring_request(
         "mongo_config": {
             "database": database,
             "collection": collection,
-            "collection_prefix": prefix,
             "has_mongo_uri": bool(uri),
         },
         "errors": [f"existing_load: {item}" for item in load_errors],
@@ -146,6 +148,16 @@ def _action(value: Any) -> str:
     return action if action in {"ask", "merge", "replace", "skip", "create_new"} else "ask"
 
 
+def _resolve_collection_name(collection_name: str = "", collection_prefix: str = "") -> str:
+    collection = _clean(collection_name or os.getenv(COLLECTION_ENV_KEY))
+    if collection:
+        return collection
+    legacy_prefix = _clean(collection_prefix or os.getenv("MONGODB_COLLECTION_PREFIX"))
+    if legacy_prefix:
+        return f"{legacy_prefix}_{LEGACY_COLLECTION_SUFFIX}"
+    return DEFAULT_COLLECTION_NAME
+
+
 def _clean(value: Any) -> str:
     return str(value or "").strip()
 
@@ -157,8 +169,7 @@ class DomainAuthoringRequestLoader(Component):
         MessageTextInput(name="raw_text", display_name="Natural Language Domain Description", required=True),
         MessageTextInput(name="mongo_uri", display_name="Mongo URI", value=""),
         MessageTextInput(name="mongo_database", display_name="Mongo Database", value="metadata_driven_agent_v2"),
-        MessageTextInput(name="collection_prefix", display_name="Collection Prefix", value="agent_v2"),
-        MessageTextInput(name="collection_name", display_name="Collection Name Override", value="", advanced=True),
+        MessageTextInput(name="collection_name", display_name="Collection Name", value=DEFAULT_COLLECTION_NAME),
         MessageTextInput(name="duplicate_action", display_name="Duplicate Action", value="ask", advanced=True),
         MessageTextInput(name="load_existing", display_name="Load Existing Items", value="true", advanced=True),
         MessageTextInput(name="load_limit", display_name="Load Limit", value="200", advanced=True),
@@ -167,14 +178,14 @@ class DomainAuthoringRequestLoader(Component):
 
     def build_payload(self) -> Data:
         result = build_domain_authoring_request(
-            getattr(self, "raw_text", ""),
-            getattr(self, "mongo_uri", ""),
-            getattr(self, "mongo_database", ""),
-            getattr(self, "collection_prefix", ""),
-            getattr(self, "collection_name", ""),
-            getattr(self, "duplicate_action", "ask"),
-            getattr(self, "load_existing", "true"),
-            getattr(self, "load_limit", "200"),
+            raw_text=getattr(self, "raw_text", ""),
+            mongo_uri=getattr(self, "mongo_uri", ""),
+            mongo_database=getattr(self, "mongo_database", ""),
+            collection_prefix="",
+            collection_name=getattr(self, "collection_name", DEFAULT_COLLECTION_NAME),
+            duplicate_action=getattr(self, "duplicate_action", "ask"),
+            load_existing=getattr(self, "load_existing", "true"),
+            load_limit=getattr(self, "load_limit", "200"),
         )
         self.status = {
             "metadata_type": "domain",

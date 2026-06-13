@@ -45,7 +45,10 @@ python tools\upload_json_to_mongodb.py --include-regression --include-sample-dat
 
 ```powershell
 $env:MONGODB_URI="mongodb://user:password@host:27017"
-python tools\upload_json_to_mongodb.py --database datagov --collection-prefix agent_v2
+python tools\upload_json_to_mongodb.py --database datagov `
+  --domain-collection agent_v2_domain_items `
+  --table-catalog-collection agent_v2_table_catalog_items `
+  --main-flow-filter-collection agent_v2_main_flow_filters
 ```
 
 `--mode upsert`가 기본값이다. deterministic `_id` 기준으로 같은 문서는 갱신된다.
@@ -53,7 +56,11 @@ python tools\upload_json_to_mongodb.py --database datagov --collection-prefix ag
 전체 target collection을 지우고 다시 넣고 싶을 때만 `--mode replace`를 사용한다.
 
 ```powershell
-python tools\upload_json_to_mongodb.py --database datagov --collection-prefix agent_v2 --mode replace
+python tools\upload_json_to_mongodb.py --database datagov `
+  --domain-collection agent_v2_domain_items `
+  --table-catalog-collection agent_v2_table_catalog_items `
+  --main-flow-filter-collection agent_v2_main_flow_filters `
+  --mode replace
 ```
 
 ## If Extra Collections Were Already Uploaded

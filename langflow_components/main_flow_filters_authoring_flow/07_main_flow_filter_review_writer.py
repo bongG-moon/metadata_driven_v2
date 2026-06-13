@@ -13,6 +13,11 @@ from lfx.io import DataInput, MessageTextInput, Output
 from lfx.schema.data import Data
 
 
+DEFAULT_COLLECTION_NAME = "agent_v2_main_flow_filters"
+COLLECTION_ENV_KEY = "MONGODB_MAIN_FLOW_FILTER_COLLECTION"
+LEGACY_COLLECTION_SUFFIX = "main_flow_filters"
+
+
 def review_and_write_main_flow_filter_payload(
     payload_value: Any,
     llm_response_value: Any,
@@ -27,8 +32,7 @@ def review_and_write_main_flow_filter_payload(
     action = _action(duplicate_action or (payload.get("duplicate_decision") or {}).get("action") or "ask")
     config = payload.get("mongo_config") if isinstance(payload.get("mongo_config"), dict) else {}
     database = _clean(mongo_database or config.get("database") or os.getenv("MONGODB_DATABASE") or "metadata_driven_agent_v2")
-    prefix = _clean(collection_prefix or config.get("collection_prefix") or os.getenv("MONGODB_COLLECTION_PREFIX") or "agent_v2")
-    collection = _clean(collection_name or config.get("collection") or f"{prefix}_main_flow_filters")
+    collection = _resolve_collection_name(collection_name or config.get("collection"), collection_prefix or config.get("collection_prefix"))
     uri = _clean(mongo_uri or os.getenv("MONGODB_URI"))
 
     write_result = {"status": "skipped", "saved_count": 0, "saved_items": [], "errors": [], "skipped_reason": ""}
@@ -208,6 +212,16 @@ def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _resolve_collection_name(collection_name: Any = "", collection_prefix: Any = "") -> str:
+    collection = _clean(collection_name or os.getenv(COLLECTION_ENV_KEY))
+    if collection:
+        return collection
+    legacy_prefix = _clean(collection_prefix or os.getenv("MONGODB_COLLECTION_PREFIX"))
+    if legacy_prefix:
+        return f"{legacy_prefix}_{LEGACY_COLLECTION_SUFFIX}"
+    return DEFAULT_COLLECTION_NAME
+
+
 class MainFlowFilterReviewWriter(Component):
     display_name = "07 Main Flow Filter Review Writer"
     description = "Normalizes the final review JSON and writes approved main flow filter metadata to MongoDB."
@@ -216,8 +230,7 @@ class MainFlowFilterReviewWriter(Component):
         MessageTextInput(name="llm_response", display_name="Review LLM Response", required=True),
         MessageTextInput(name="mongo_uri", display_name="Mongo URI", value="", advanced=True),
         MessageTextInput(name="mongo_database", display_name="Mongo Database", value="", advanced=True),
-        MessageTextInput(name="collection_prefix", display_name="Collection Prefix", value="", advanced=True),
-        MessageTextInput(name="collection_name", display_name="Collection Name Override", value="", advanced=True),
+        MessageTextInput(name="collection_name", display_name="Collection Name", value="", advanced=True),
         MessageTextInput(name="duplicate_action", display_name="Duplicate Action Override", value="", advanced=True),
     ]
     outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]
@@ -228,7 +241,7 @@ class MainFlowFilterReviewWriter(Component):
             getattr(self, "llm_response", ""),
             getattr(self, "mongo_uri", ""),
             getattr(self, "mongo_database", ""),
-            getattr(self, "collection_prefix", ""),
+            "",
             getattr(self, "collection_name", ""),
             getattr(self, "duplicate_action", ""),
         )

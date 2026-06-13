@@ -89,7 +89,7 @@ python tools\validate_llm_in_loop.py
 
 ## MongoDB
 
-`.env`는 원본 workspace에서 복사되어 있습니다. 기본 코드 fallback은 guide의 `metadata_driven_agent_v2`/`agent_v2` 계약을 유지하지만, 실제 실행 시에는 `.env`의 `MONGODB_DATABASE`, `MONGODB_COLLECTION_PREFIX`가 우선합니다.
+`.env`는 원본 workspace에서 복사되어 있습니다. MongoDB metadata는 prefix로 collection을 조합하지 않고 full collection name 3개를 그대로 입력합니다. 기본값은 `MONGODB_DATABASE=metadata_driven_agent_v2`, `MONGODB_DOMAIN_COLLECTION=agent_v2_domain_items`, `MONGODB_TABLE_CATALOG_COLLECTION=agent_v2_table_catalog_items`, `MONGODB_MAIN_FLOW_FILTER_COLLECTION=agent_v2_main_flow_filters`입니다.
 
 업로드 전 dry-run으로 collection과 document count를 확인하세요.
 

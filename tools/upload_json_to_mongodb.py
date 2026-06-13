@@ -10,6 +10,10 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DOMAIN_COLLECTION = "agent_v2_domain_items"
+DEFAULT_TABLE_CATALOG_COLLECTION = "agent_v2_table_catalog_items"
+DEFAULT_MAIN_FLOW_FILTER_COLLECTION = "agent_v2_main_flow_filters"
+LEGACY_PREFIXES = {"agent_v1", "agent_v2", "agent_v3", "agent_v4"}
 
 
 def main() -> int:
@@ -18,7 +22,14 @@ def main() -> int:
     parser.add_argument("--root", default=str(PROJECT_ROOT), help="Project root that contains metadata/ and sample_data/.")
     parser.add_argument("--mongo-uri", default=os.getenv("MONGODB_URI"), help="MongoDB URI. Defaults to MONGODB_URI.")
     parser.add_argument("--database", default=os.getenv("MONGODB_DATABASE", "metadata_driven_agent_v2"))
-    parser.add_argument("--collection-prefix", default=os.getenv("MONGODB_COLLECTION_PREFIX", "agent_v2"))
+    parser.add_argument("--domain-collection", default=os.getenv("MONGODB_DOMAIN_COLLECTION", ""))
+    parser.add_argument("--table-catalog-collection", default=os.getenv("MONGODB_TABLE_CATALOG_COLLECTION", ""))
+    parser.add_argument("--main-flow-filter-collection", default=os.getenv("MONGODB_MAIN_FLOW_FILTER_COLLECTION", ""))
+    parser.add_argument(
+        "--collection-prefix",
+        default=os.getenv("MONGODB_COLLECTION_PREFIX", ""),
+        help="Deprecated fallback for older automation and optional fixture collections.",
+    )
     parser.add_argument(
         "--include-regression",
         action="store_true",
@@ -41,9 +52,12 @@ def main() -> int:
     root = Path(args.root).resolve()
     batches = build_upload_batches(
         root,
-        args.collection_prefix,
+        domain_collection_name=args.domain_collection,
+        table_catalog_collection_name=args.table_catalog_collection,
+        main_flow_filter_collection_name=args.main_flow_filter_collection,
         include_regression=args.include_regression,
         include_sample_data=args.include_sample_data,
+        collection_prefix=args.collection_prefix,
     )
     if args.dry_run:
         print_upload_plan(batches, database=args.database)
@@ -72,27 +86,74 @@ def load_env_file(path: Path) -> None:
 
 def build_upload_batches(
     root: Path,
-    collection_prefix: str,
+    domain_collection_name: str = "",
+    table_catalog_collection_name: str = "",
+    main_flow_filter_collection_name: str = "",
     include_regression: bool = False,
     include_sample_data: bool = False,
+    collection_prefix: str = "",
 ) -> dict[str, list[dict[str, Any]]]:
     metadata_dir = root / "metadata"
     sample_dir = root / "sample_data"
+    collections = _resolve_metadata_collections(
+        domain_collection_name,
+        table_catalog_collection_name,
+        main_flow_filter_collection_name,
+        collection_prefix,
+    )
+    auxiliary_prefix = _resolve_auxiliary_prefix(collection_prefix, collections["domain_items"])
 
     batches: dict[str, list[dict[str, Any]]] = {
-        f"{collection_prefix}_domain_items": _domain_item_docs(metadata_dir / "domain_items.json"),
-        f"{collection_prefix}_table_catalog_items": _table_catalog_docs(metadata_dir / "table_catalog.json"),
-        f"{collection_prefix}_main_flow_filters": _main_flow_filter_docs(metadata_dir / "main_flow_filters.json"),
+        collections["domain_items"]: _domain_item_docs(metadata_dir / "domain_items.json"),
+        collections["table_catalog"]: _table_catalog_docs(metadata_dir / "table_catalog.json"),
+        collections["main_flow_filters"]: _main_flow_filter_docs(metadata_dir / "main_flow_filters.json"),
     }
 
     if include_regression:
-        batches[f"{collection_prefix}_regression_questions"] = _regression_question_docs(metadata_dir / "regression_questions.json")
+        batches[f"{auxiliary_prefix}_regression_questions"] = _regression_question_docs(metadata_dir / "regression_questions.json")
 
     if include_sample_data:
         for path in sorted(sample_dir.glob("*.json")):
-            batches[f"{collection_prefix}_sample_{path.stem}"] = _sample_row_docs(path)
+            batches[f"{auxiliary_prefix}_sample_{path.stem}"] = _sample_row_docs(path)
 
     return batches
+
+
+def _resolve_metadata_collections(
+    domain_collection_name: str = "",
+    table_catalog_collection_name: str = "",
+    main_flow_filter_collection_name: str = "",
+    collection_prefix: str = "",
+) -> dict[str, str]:
+    legacy_prefix = _clean(collection_prefix)
+    if domain_collection_name and not table_catalog_collection_name and not main_flow_filter_collection_name and not legacy_prefix:
+        if _clean(domain_collection_name) in LEGACY_PREFIXES:
+            legacy_prefix = _clean(domain_collection_name)
+            domain_collection_name = ""
+
+    if legacy_prefix:
+        return {
+            "domain_items": _clean(domain_collection_name) or f"{legacy_prefix}_domain_items",
+            "table_catalog": _clean(table_catalog_collection_name) or f"{legacy_prefix}_table_catalog_items",
+            "main_flow_filters": _clean(main_flow_filter_collection_name) or f"{legacy_prefix}_main_flow_filters",
+        }
+
+    return {
+        "domain_items": _clean(domain_collection_name) or DEFAULT_DOMAIN_COLLECTION,
+        "table_catalog": _clean(table_catalog_collection_name) or DEFAULT_TABLE_CATALOG_COLLECTION,
+        "main_flow_filters": _clean(main_flow_filter_collection_name) or DEFAULT_MAIN_FLOW_FILTER_COLLECTION,
+    }
+
+
+def _resolve_auxiliary_prefix(collection_prefix: str, domain_collection_name: str) -> str:
+    prefix = _clean(collection_prefix)
+    if prefix:
+        return prefix
+    suffix = "_domain_items"
+    collection = _clean(domain_collection_name)
+    if collection.endswith(suffix):
+        return collection[: -len(suffix)]
+    return "agent_v2"
 
 
 def upload_batches(mongo_uri: str, database: str, batches: dict[str, list[dict[str, Any]]], mode: str) -> None:
@@ -179,6 +240,10 @@ def _doc(doc_id: str, source_path: Path, payload: dict[str, Any]) -> dict[str, A
 def _read_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as file:
         return json.load(file)
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def _stable_hash(value: Any) -> str:

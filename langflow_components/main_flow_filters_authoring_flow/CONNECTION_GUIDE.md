@@ -26,7 +26,7 @@
 | 1 | `Chat Input` or Text input | natural language text | `00 Main Flow Filter Authoring Request Loader` | `raw_text` |
 | 2 | Text input | MongoDB URI | `00 Main Flow Filter Authoring Request Loader` | `mongo_uri` |
 | 3 | Text input | DB name | `00 Main Flow Filter Authoring Request Loader` | `mongo_database` |
-| 4 | Text input | collection prefix | `00 Main Flow Filter Authoring Request Loader` | `collection_prefix` |
+| 4 | Text input | full collection name, e.g. `agent_v2_main_flow_filters` | `00 Main Flow Filter Authoring Request Loader` | `collection_name` |
 | 5 | `00 Main Flow Filter Authoring Request Loader` | `payload_out` | `01 Main Flow Filter Text Refinement Prompt Builder` | `payload` |
 | 6 | `01 Main Flow Filter Text Refinement Prompt Builder` | `refinement_prompt` | Gemini/LLM refinement node | prompt/message input |
 | 7 | `00 Main Flow Filter Authoring Request Loader` | `payload_out` | `02 Main Flow Filter Text Refinement Normalizer` | `payload` |

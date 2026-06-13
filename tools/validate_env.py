@@ -19,7 +19,9 @@ def main() -> int:
             [
                 _check_present("MONGODB_URI"),
                 _check_present("MONGODB_DATABASE"),
-                _check_present("MONGODB_COLLECTION_PREFIX"),
+                _check_present("MONGODB_DOMAIN_COLLECTION"),
+                _check_present("MONGODB_TABLE_CATALOG_COLLECTION"),
+                _check_present("MONGODB_MAIN_FLOW_FILTER_COLLECTION"),
                 _check_present("MONGODB_RESULT_COLLECTION"),
             ]
         )

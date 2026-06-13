@@ -26,7 +26,7 @@
 | 1 | `Chat Input` or Text input | natural language text | `00 Domain Authoring Request Loader` | `raw_text` |
 | 2 | Text input | MongoDB URI | `00 Domain Authoring Request Loader` | `mongo_uri` |
 | 3 | Text input | DB name | `00 Domain Authoring Request Loader` | `mongo_database` |
-| 4 | Text input | collection prefix | `00 Domain Authoring Request Loader` | `collection_prefix` |
+| 4 | Text input | full collection name, e.g. `agent_v2_domain_items` | `00 Domain Authoring Request Loader` | `collection_name` |
 | 5 | `00 Domain Authoring Request Loader` | `payload_out` | `01 Domain Text Refinement Prompt Builder` | `payload` |
 | 6 | `01 Domain Text Refinement Prompt Builder` | `refinement_prompt` | Gemini/LLM refinement node | prompt/message input |
 | 7 | `00 Domain Authoring Request Loader` | `payload_out` | `02 Domain Text Refinement Normalizer` | `payload` |

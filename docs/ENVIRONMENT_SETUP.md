@@ -14,7 +14,9 @@
 ```dotenv
 MONGODB_URI=mongodb://user:password@host:27017
 MONGODB_DATABASE=metadata_driven_agent_v2
-MONGODB_COLLECTION_PREFIX=agent_v2
+MONGODB_DOMAIN_COLLECTION=agent_v2_domain_items
+MONGODB_TABLE_CATALOG_COLLECTION=agent_v2_table_catalog_items
+MONGODB_MAIN_FLOW_FILTER_COLLECTION=agent_v2_main_flow_filters
 MONGODB_RESULT_COLLECTION=agent_v2_result_store
 RUN_MONGODB_VALIDATION=true
 ```

@@ -30,7 +30,7 @@
 | 4 | `00 Request State Loader` | `payload` | `01 Metadata Context Loader` | `payload` |
 | 5 | Text input | MongoDB URI | `01 Metadata Context Loader` | `mongo_uri` |
 | 6 | Text input | DB name | `01 Metadata Context Loader` | `mongo_database` |
-| 7 | Text input | collection prefix | `01 Metadata Context Loader` | `collection_prefix` |
+| 7 | Text input 3개 | full metadata collection names | `01 Metadata Context Loader` | `domain_collection_name`, `table_catalog_collection_name`, `main_flow_filter_collection_name` |
 | 8 | `01 Metadata Context Loader` | `payload_out` | `02 Intent Prompt Builder` | `payload` |
 | 9 | `02 Intent Prompt Builder` | `intent_prompt` | Gemini/LLM intent node | prompt/message input |
 | 10 | `01 Metadata Context Loader` | `payload_out` | `03 Intent Plan Normalizer` | `payload` |

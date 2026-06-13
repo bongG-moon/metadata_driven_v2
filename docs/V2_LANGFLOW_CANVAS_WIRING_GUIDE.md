@@ -42,7 +42,7 @@
 | 4 | 00 Request State Loader | `payload` | 01 Metadata Context Loader | `payload` | 질문 payload 전달 |
 | 5 | Text Input 또는 Secret | value | 01 Metadata Context Loader | `mongo_uri` | MongoDB 사용 시 필요 |
 | 6 | Text Input | value | 01 Metadata Context Loader | `mongo_database` | 기본값 예: `metadata_driven_agent_v2` |
-| 7 | Text Input | value | 01 Metadata Context Loader | `collection_prefix` | 기본값 예: `agent_v2` |
+| 7 | Text Input 3개 | value | 01 Metadata Context Loader | `domain_collection_name`, `table_catalog_collection_name`, `main_flow_filter_collection_name` | full collection name 입력. 기본값 예: `agent_v2_domain_items`, `agent_v2_table_catalog_items`, `agent_v2_main_flow_filters` |
 | 8 | Text Input | value | 01 Metadata Context Loader | `metadata_source` | `mongodb`, `local`, `auto` 중 선택 |
 | 9 | Text Input | value | 01 Metadata Context Loader | `metadata_dir` | local 검증 시 `metadata` 폴더 경로 |
 | 10 | 01 Metadata Context Loader | `payload_out` | 02 Intent Prompt Builder | `payload` | metadata 포함 payload |
@@ -223,8 +223,7 @@ State에 들어가는 주요 값:
 | A1 | Chat Input 또는 Text Input | text/message | 00 XX Authoring Request Loader | `raw_text` | 자연어 metadata 설명 |
 | A2 | Text/Secret Input | value | 00 XX Authoring Request Loader | `mongo_uri` | MongoDB URI |
 | A3 | Text Input | value | 00 XX Authoring Request Loader | `mongo_database` | 기본 `metadata_driven_agent_v2` |
-| A4 | Text Input | value | 00 XX Authoring Request Loader | `collection_prefix` | 기본 `agent_v2` |
-| A5 | Text Input | value | 00 XX Authoring Request Loader | `collection_name` | 선택. collection override |
+| A4 | Text Input | value | 00 XX Authoring Request Loader | `collection_name` | full collection name 입력. Domain `agent_v2_domain_items`, Table `agent_v2_table_catalog_items`, Filter `agent_v2_main_flow_filters` |
 | A6 | Text Input | value | 00 XX Authoring Request Loader | `duplicate_action` | 기본 `ask`; `merge`, `replace`, `skip`, `create_new` 가능 |
 | A7 | Text Input | value | 00 XX Authoring Request Loader | `load_existing` | 기본 `true` |
 | A8 | Text Input | value | 00 XX Authoring Request Loader | `load_limit` | 기본 `200` |
@@ -244,8 +243,7 @@ State에 들어가는 주요 값:
 | A22 | LLM-3 Review JSON | text/message output | 07 XX Review Writer | `llm_response` | review JSON |
 | A23 | Text/Secret Input | value | 07 XX Review Writer | `mongo_uri` | 선택. writer override |
 | A24 | Text Input | value | 07 XX Review Writer | `mongo_database` | 선택. writer override |
-| A25 | Text Input | value | 07 XX Review Writer | `collection_prefix` | 선택. writer override |
-| A26 | Text Input | value | 07 XX Review Writer | `collection_name` | 선택. writer override |
+| A25 | Text Input | value | 07 XX Review Writer | `collection_name` | 선택. writer override도 full collection name으로 입력 |
 | A27 | Text Input | value | 07 XX Review Writer | `duplicate_action` | 선택. writer override |
 | A28 | 07 XX Review Writer | `payload_out` | 08 XX Authoring Response Builder | `payload` | 최종 응답 생성 |
 | A29 | 08 XX Authoring Response Builder | `message` | Chat Output | `message` | 사용자 표시용 |
@@ -258,9 +256,10 @@ State에 들어가는 주요 값:
 - `review.ready_to_save=false`이면 07 writer는 저장하지 않아야 한다.
 - 05가 duplicate decision을 요구하고 `duplicate_action=ask`이면 07 writer는 저장하지 않는다.
 - collection 기본값:
-  - domain: `{collection_prefix}_domain_items`
-  - table catalog: `{collection_prefix}_table_catalog_items`
-  - main flow filter: `{collection_prefix}_main_flow_filters`
+  - domain: `agent_v2_domain_items`
+  - table catalog: `agent_v2_table_catalog_items`
+  - main flow filter: `agent_v2_main_flow_filters`
+  - 다른 collection을 쓰는 경우 prefix가 아니라 full collection name을 그대로 입력한다.
 
 ## 5. 구현 후 확인 순서
 

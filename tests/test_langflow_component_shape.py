@@ -83,3 +83,38 @@ def test_main_flow_files_use_clean_sequential_numbering() -> None:
         ]
         assert display_names, f"{path} must define a display_name"
         assert display_names[0].startswith(f"{index:02d} "), f"{path.name} display_name should start with {index:02d}"
+
+
+def test_mongodb_metadata_components_expose_full_collection_names() -> None:
+    expected_inputs_by_file = {
+        "main_flow/01_metadata_context_loader.py": {
+            "domain_collection_name",
+            "table_catalog_collection_name",
+            "main_flow_filter_collection_name",
+        },
+        "domain_authoring_flow/00_domain_authoring_request_loader.py": {"collection_name"},
+        "domain_authoring_flow/07_domain_review_writer.py": {"collection_name"},
+        "table_catalog_authoring_flow/00_table_catalog_authoring_request_loader.py": {"collection_name"},
+        "table_catalog_authoring_flow/07_table_catalog_review_writer.py": {"collection_name"},
+        "main_flow_filters_authoring_flow/00_main_flow_filter_authoring_request_loader.py": {"collection_name"},
+        "main_flow_filters_authoring_flow/07_main_flow_filter_review_writer.py": {"collection_name"},
+    }
+
+    for relative_path, expected_inputs in expected_inputs_by_file.items():
+        path = PROJECT_ROOT / "langflow_components" / relative_path
+        module_name = f"collection_contract_{path.stem}".replace(".", "_")
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        component_classes = [
+            value
+            for value in module.__dict__.values()
+            if isinstance(value, type) and any("Component" in base.__name__ for base in value.__bases__)
+        ]
+        assert component_classes, f"{path} must define a Component subclass"
+        input_names = {getattr(item, "name", None) for item in getattr(component_classes[0], "inputs", [])}
+
+        assert expected_inputs.issubset(input_names)
+        assert "collection_prefix" not in input_names
