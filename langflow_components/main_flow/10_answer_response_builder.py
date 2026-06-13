@@ -187,7 +187,7 @@ def _unique(values: list[Any]) -> list[str]:
 
 
 class AnswerResponseBuilder(Component):
-    display_name = "08 Answer Response Builder"
+    display_name = "10 Answer Response Builder"
     description = "Combines the Langflow Gemini/LLM answer with result data, applied scope, and next-turn state."
     inputs = [
         DataInput(name="payload", display_name="Payload", required=True),

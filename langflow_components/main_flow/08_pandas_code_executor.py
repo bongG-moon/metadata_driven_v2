@@ -338,7 +338,7 @@ def _payload(value: Any) -> dict[str, Any]:
 
 
 class PandasCodeExecutor(Component):
-    display_name = "06 Pandas Code Executor"
+    display_name = "08 Pandas Code Executor"
     description = "Parses Gemini/LLM pandas JSON, checks code safety, and executes it against runtime source DataFrames."
     inputs = [
         DataInput(name="payload", display_name="Payload", required=True),

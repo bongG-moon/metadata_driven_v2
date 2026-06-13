@@ -27,13 +27,16 @@
 5. `03_intent_plan_normalizer.py`
 6. data retrieval flow
 7. `04_retrieval_payload_adapter.py`
-8. `05_pandas_prompt_builder.py`
-9. Gemini/LLM pandas code JSON node
-10. `06_pandas_code_executor.py`
-11. `07_answer_prompt_builder.py`
-12. Gemini/LLM final answer node
-13. `08_answer_response_builder.py`
-14. `09_answer_message_adapter.py`
+8. `05_mongodb_data_store.py`
+9. `06_mongodb_data_loader.py`
+10. `07_pandas_prompt_builder.py`
+11. Gemini/LLM pandas code JSON node
+12. `08_pandas_code_executor.py`
+13. `09_answer_prompt_builder.py`
+14. Gemini/LLM final answer node
+15. `10_answer_response_builder.py`
+16. `05_mongodb_data_store.py`
+17. `11_answer_message_adapter.py`
 
 LLM 없이 동작하는 deterministic 예시는 `langflow_components/demo_flow/`에 따로 둔다. 운영 권장 canvas는 `langflow_components/main_flow/`와 `langflow_components/data_retrieval_flow/`의 조합을 따른다.
 
@@ -47,8 +50,10 @@ retrieval은 두 방식 중 하나를 쓴다.
 03 Intent Plan Normalizer.payload_out -> 01 Dummy Data Retriever.payload
 03 Intent Plan Normalizer.payload_out -> 04 Retrieval Payload Adapter.main_payload
 01 Dummy Data Retriever.retrieval_payload -> 04 Retrieval Payload Adapter.retrieval_payload
-04 Retrieval Payload Adapter.payload -> 05 Pandas Prompt Builder.payload
-04 Retrieval Payload Adapter.payload -> 06 Pandas Code Executor.payload
+04 Retrieval Payload Adapter.payload -> 05 MongoDB Data Store.payload
+05 MongoDB Data Store.payload_out -> 06 MongoDB Data Loader.payload
+06 MongoDB Data Loader.payload_out -> 07 Pandas Prompt Builder.payload
+06 MongoDB Data Loader.payload_out -> 08 Pandas Code Executor.payload
 ```
 
 ### Four Sources
@@ -66,8 +71,10 @@ retrieval은 두 방식 중 하나를 쓴다.
 05 Goodocs Retriever.retrieval_payload -> 06 Source Retrieval Merger.goodocs_retrieval
 
 06 Source Retrieval Merger.retrieval_payload -> 04 Retrieval Payload Adapter.retrieval_payload
-04 Retrieval Payload Adapter.payload -> 05 Pandas Prompt Builder.payload
-04 Retrieval Payload Adapter.payload -> 06 Pandas Code Executor.payload
+04 Retrieval Payload Adapter.payload -> 05 MongoDB Data Store.payload
+05 MongoDB Data Store.payload_out -> 06 MongoDB Data Loader.payload
+06 MongoDB Data Loader.payload_out -> 07 Pandas Prompt Builder.payload
+06 MongoDB Data Loader.payload_out -> 08 Pandas Code Executor.payload
 ```
 
 ## LLM Placement
@@ -75,8 +82,8 @@ retrieval은 두 방식 중 하나를 쓴다.
 Langflow의 Gemini/LLM node는 세 위치에 둔다.
 
 - Intent planning: `02 Intent Prompt Builder -> Gemini/LLM -> 03 Intent Plan Normalizer`
-- Pandas code generation: `05 Pandas Prompt Builder -> Gemini/LLM -> 06 Pandas Code Executor`
-- Final answer writing: `07 Answer Prompt Builder -> Gemini/LLM -> 08 Answer Response Builder`
+- Pandas code generation: `07 Pandas Prompt Builder -> Gemini/LLM -> 08 Pandas Code Executor`
+- Final answer writing: `09 Answer Prompt Builder -> Gemini/LLM -> 10 Answer Response Builder`
 
 LLM 출력은 그대로 신뢰하지 않는다. intent JSON은 normalizer에서 dataset key, source alias, params, filter scope를 metadata와 대조하고, pandas code JSON은 safety check를 통과한 뒤 in-memory DataFrame에만 실행한다.
 
@@ -89,16 +96,17 @@ LLM 출력은 그대로 신뢰하지 않는다. intent JSON은 normalizer에서 
 - `metadata`: domain, table catalog, main flow filters
 - `intent_plan`: normalized intent, analysis kind, step plan
 - `retrieval_jobs`: dataset별 조회 요청
-- `runtime_sources`: pandas 실행 전까지 유지하는 source rows
+- `runtime_sources`: pandas 실행 직전에 `06 MongoDB Data Loader`가 복원하는 source rows
+- `runtime_source_refs`: `05 MongoDB Data Store`가 저장한 source row MongoDB refs
 - `source_results`: compact retrieval trace
 - `analysis`: pandas 실행 결과
 - `data`: 최종 사용자 표시 데이터
 - `applied_scope`: 적용 dataset, filter, params, metadata refs
 - `answer_message`: 최종 답변
 
-최종 payload에서는 `runtime_sources`를 제거하고 `data.rows`와 source trace만 유지한다. 운영에서는 `data_ref`를 MongoDB/cache 저장소 key로 연결하는 구조를 권장한다.
+최종 payload에서는 `runtime_sources`를 제거하고 `data.rows`, `state.current_data.rows`, source trace는 `05 MongoDB Data Store`를 통해 MongoDB result collection의 `data_ref`로 compact한다. 운영 입력은 `result_collection_name`에 `agent_v2_result_store` 같은 full collection name을 직접 넣는다.
 
-Langflow Playground에서 매번 각 노드의 result를 열어보지 않아도 되도록, `09_answer_message_adapter.py`는 최종 payload를 Chat Output용 Markdown으로 표시한다. 표시 내용은 payload를 새로 중복 저장하지 않고 기존 `answer_message`, `data`, `intent_plan`, `applied_scope`, `analysis`를 읽어서 만든다.
+Langflow Playground에서 매번 각 노드의 result를 열어보지 않아도 되도록, `11_answer_message_adapter.py`는 최종 payload를 Chat Output용 Markdown으로 표시한다. 표시 내용은 payload를 새로 중복 저장하지 않고 기존 `answer_message`, `data`, `intent_plan`, `applied_scope`, `analysis`를 읽어서 만든다.
 
 - 답변 내용
 - 결과 테이블과 row count

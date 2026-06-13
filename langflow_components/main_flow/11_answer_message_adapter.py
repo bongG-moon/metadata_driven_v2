@@ -246,7 +246,7 @@ def _truncate(text: str, limit: int) -> str:
 
 
 class AnswerMessageAdapter(Component):
-    display_name = "09 Answer Message Adapter"
+    display_name = "11 Answer Message Adapter"
     description = "Builds a playground-friendly Message with answer text, result table, intent analysis, and pandas code."
     inputs = [DataInput(name="payload", display_name="Payload", required=True)]
     outputs = [Output(name="message", display_name="Message", method="build_message")]

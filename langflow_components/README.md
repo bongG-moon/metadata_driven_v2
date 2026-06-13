@@ -23,7 +23,8 @@ or another conditional block. The code can be standalone without sibling imports
 
 - Do not import sibling project files from numbered component files.
 - Pass compact `payload` dictionaries between nodes.
-- Keep raw source rows in `runtime_sources` until pandas analysis needs them.
+- Store large row payloads in the MongoDB result collection with `05 MongoDB Data Store`.
+- Hydrate `data_ref` pointers with `06 MongoDB Data Loader` before pandas analysis or follow-up planning.
 - Preserve `state`, `current_data`, `followup_source_results`, and `data_ref` fields for follow-up questions.
 - For operating inside Langflow Desktop, prefer the `lfx.*` imports used by the generated files.
 
@@ -43,9 +44,10 @@ Use Langflow's Gemini/LLM nodes for the actual reasoning calls:
 
 1. `02 Intent Prompt Builder.intent_prompt -> Gemini/LLM -> 03 Intent Plan Normalizer.llm_response`
 2. data retrieval flow -> `04 Retrieval Payload Adapter.payload`
-3. `05 Pandas Prompt Builder.pandas_prompt -> Gemini/LLM -> 06 Pandas Code Executor.llm_response`
-4. `07 Answer Prompt Builder.answer_prompt -> Gemini/LLM -> 08 Answer Response Builder.llm_response`
-5. `09 Answer Message Adapter.message -> Chat Output`
+3. `04 Retrieval Payload Adapter.payload -> 05 MongoDB Data Store -> 06 MongoDB Data Loader`
+4. `07 Pandas Prompt Builder.pandas_prompt -> Gemini/LLM -> 08 Pandas Code Executor.llm_response`
+5. `09 Answer Prompt Builder.answer_prompt -> Gemini/LLM -> 10 Answer Response Builder.llm_response`
+6. `10 Answer Response Builder.payload_out -> 05 MongoDB Data Store -> 11 Answer Message Adapter.message -> Chat Output`
 
 The final adapter formats one playground-friendly Markdown message from the existing final payload.
 It includes the answer, result table, intent summary, retrieval/step plan summary, pandas execution

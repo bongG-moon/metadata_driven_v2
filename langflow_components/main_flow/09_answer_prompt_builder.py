@@ -80,7 +80,7 @@ def _payload(value: Any) -> dict[str, Any]:
 
 
 class AnswerPromptBuilder(Component):
-    display_name = "07 Answer Prompt Builder"
+    display_name = "09 Answer Prompt Builder"
     description = "Builds the prompt that should be sent to the Langflow Gemini/LLM node for final answer writing."
     inputs = [DataInput(name="payload", display_name="Payload", required=True)]
     outputs = [

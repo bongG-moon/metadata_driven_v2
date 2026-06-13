@@ -61,11 +61,13 @@ def test_main_flow_files_use_clean_sequential_numbering() -> None:
         "02_intent_prompt_builder.py",
         "03_intent_plan_normalizer.py",
         "04_retrieval_payload_adapter.py",
-        "05_pandas_prompt_builder.py",
-        "06_pandas_code_executor.py",
-        "07_answer_prompt_builder.py",
-        "08_answer_response_builder.py",
-        "09_answer_message_adapter.py",
+        "05_mongodb_data_store.py",
+        "06_mongodb_data_loader.py",
+        "07_pandas_prompt_builder.py",
+        "08_pandas_code_executor.py",
+        "09_answer_prompt_builder.py",
+        "10_answer_response_builder.py",
+        "11_answer_message_adapter.py",
     ]
     actual_files = [path.name for path in sorted((PROJECT_ROOT / "langflow_components" / "main_flow").glob("*.py"))]
     assert actual_files == expected_files

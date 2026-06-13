@@ -140,7 +140,7 @@ def _source_summary(runtime_sources: dict[str, Any]) -> dict[str, Any]:
 
 def _state_summary(state: dict[str, Any]) -> dict[str, Any]:
     current_data = state.get("current_data") if isinstance(state.get("current_data"), dict) else {}
-    rows = current_data.get("rows") if isinstance(current_data.get("rows"), list) else []
+    rows = _rows_from_current_data(current_data)
     return {
         "has_state": bool(state),
         "context": state.get("context", {}),
@@ -157,8 +157,20 @@ def _payload(value: Any) -> dict[str, Any]:
     return deepcopy(data) if isinstance(data, dict) else {}
 
 
+def _rows_from_current_data(current_data: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = current_data.get("rows")
+    if isinstance(rows, list):
+        return [row for row in rows if isinstance(row, dict)]
+    data = current_data.get("data")
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict) and isinstance(data.get("rows"), list):
+        return [row for row in data["rows"] if isinstance(row, dict)]
+    return []
+
+
 class PandasPromptBuilder(Component):
-    display_name = "05 Pandas Prompt Builder"
+    display_name = "07 Pandas Prompt Builder"
     description = "Builds the prompt that should be sent to the Langflow Gemini/LLM node for pandas code generation."
     inputs = [DataInput(name="payload", display_name="Payload", required=True)]
     outputs = [

@@ -41,13 +41,16 @@ Chat Input
 -> 03 Intent Plan Normalizer
 -> data retrieval flow
 -> 04 Retrieval Payload Adapter
--> 05 Pandas Prompt Builder
+-> 05 MongoDB Data Store
+-> 06 MongoDB Data Loader
+-> 07 Pandas Prompt Builder
 -> Gemini/LLM Pandas Code JSON
--> 06 Pandas Code Executor
--> 07 Answer Prompt Builder
+-> 08 Pandas Code Executor
+-> 09 Answer Prompt Builder
 -> Gemini/LLM Final Answer
--> 08 Answer Response Builder
--> 09 Answer Message Adapter
+-> 10 Answer Response Builder
+-> 05 MongoDB Data Store
+-> 11 Answer Message Adapter
 -> Chat Output
 ```
 
@@ -89,6 +92,10 @@ python tools\validate_llm_in_loop.py
 
 ## MongoDB
 
+Main flow result rows use a separate full-name collection, `MONGODB_RESULT_COLLECTION` (default `agent_v2_result_store`).
+`05 MongoDB Data Store` writes large `runtime_sources`, `data.rows`, and `state.current_data.rows` there, while
+`06 MongoDB Data Loader` restores those refs before pandas execution or follow-up planning.
+
 `.env`는 원본 workspace에서 복사되어 있습니다. MongoDB metadata는 prefix로 collection을 조합하지 않고 full collection name 3개를 그대로 입력합니다. 기본값은 `MONGODB_DATABASE=metadata_driven_agent_v2`, `MONGODB_DOMAIN_COLLECTION=agent_v2_domain_items`, `MONGODB_TABLE_CATALOG_COLLECTION=agent_v2_table_catalog_items`, `MONGODB_MAIN_FLOW_FILTER_COLLECTION=agent_v2_main_flow_filters`입니다.
 
 업로드 전 dry-run으로 collection과 document count를 확인하세요.
@@ -111,3 +118,4 @@ python tools\upload_json_to_mongodb.py --dry-run
 - `langflow_components/main_flow_filters_authoring_flow/CONNECTION_GUIDE.md`
 - `docs/LANGFLOW_NODE_CONNECTION_GUIDE.md`
 - `docs/LANGFLOW_IMPLEMENTATION_GUIDE.md`
+- `docs/WEB_IMPLEMENTATION_GUIDE.md` - main flow와 metadata authoring flow를 업무 web으로 감싸기 위한 구현 요구사항

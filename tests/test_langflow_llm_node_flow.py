@@ -24,11 +24,13 @@ def test_langflow_llm_node_style_flow_contract() -> None:
     intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
     dummy_retriever = load_component("langflow_components/data_retrieval_flow/01_dummy_data_retriever.py")
     retrieval_adapter = load_component("langflow_components/main_flow/04_retrieval_payload_adapter.py")
-    pandas_prompt_builder = load_component("langflow_components/main_flow/05_pandas_prompt_builder.py")
-    pandas_executor = load_component("langflow_components/main_flow/06_pandas_code_executor.py")
-    answer_prompt_builder = load_component("langflow_components/main_flow/07_answer_prompt_builder.py")
-    answer_builder = load_component("langflow_components/main_flow/08_answer_response_builder.py")
-    answer_message_adapter = load_component("langflow_components/main_flow/09_answer_message_adapter.py")
+    data_store = load_component("langflow_components/main_flow/05_mongodb_data_store.py")
+    data_loader = load_component("langflow_components/main_flow/06_mongodb_data_loader.py")
+    pandas_prompt_builder = load_component("langflow_components/main_flow/07_pandas_prompt_builder.py")
+    pandas_executor = load_component("langflow_components/main_flow/08_pandas_code_executor.py")
+    answer_prompt_builder = load_component("langflow_components/main_flow/09_answer_prompt_builder.py")
+    answer_builder = load_component("langflow_components/main_flow/10_answer_response_builder.py")
+    answer_message_adapter = load_component("langflow_components/main_flow/11_answer_message_adapter.py")
 
     payload = request_loader.build_request_payload("오늘 전체 재공 수량 알려줘", "test-session")
     payload = metadata_loader.load_metadata_payload(
@@ -69,6 +71,8 @@ def test_langflow_llm_node_style_flow_contract() -> None:
     payload = retrieval_adapter.adapt_retrieval_payload(payload, retrieval_payload)
     assert payload["runtime_sources"]["wip_total"]
     assert payload["source_results"][0]["preview_rows"]
+    payload = data_store.store_payload_in_mongodb(payload, enabled="false")
+    payload = data_loader.load_payload_from_mongodb(payload, enabled="false")
 
     pandas_prompt = pandas_prompt_builder.build_pandas_prompt_payload(payload)["prompt"]
     assert "result_df" in pandas_prompt
@@ -96,6 +100,7 @@ def test_langflow_llm_node_style_flow_contract() -> None:
 
     answer_llm_json = {"answer_message": "오늘 전체 재공 수량은 계산 결과 기준으로 확인되었습니다."}
     payload = answer_builder.build_answer_response_payload(payload, json.dumps(answer_llm_json, ensure_ascii=False))
+    payload = data_store.store_payload_in_mongodb(payload, enabled="false")
     assert payload["answer_message"] == answer_llm_json["answer_message"]
     assert payload["data"]["row_count"] == 1
     assert payload["applied_scope"]["datasets"] == ["wip_today"]
@@ -145,7 +150,7 @@ def test_intent_normalizer_builds_fallback_jobs_when_llm_omits_jobs() -> None:
 
 
 def test_pandas_executor_normalizes_llm_result_column_names() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/06_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/08_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "rank_wip_then_join_production",

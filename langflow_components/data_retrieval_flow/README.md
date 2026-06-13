@@ -21,8 +21,10 @@ Use only `01 Dummy Data Retriever`.
 03 Intent Plan Normalizer.payload_out -> 01 Dummy Data Retriever.payload
 03 Intent Plan Normalizer.payload_out -> 04 Retrieval Payload Adapter.main_payload
 01 Dummy Data Retriever.retrieval_payload -> 04 Retrieval Payload Adapter.retrieval_payload
-04 Retrieval Payload Adapter.payload -> 05 Pandas Prompt Builder.payload
-04 Retrieval Payload Adapter.payload -> 06 Pandas Code Executor.payload
+04 Retrieval Payload Adapter.payload -> 05 MongoDB Data Store.payload
+05 MongoDB Data Store.payload_out -> 06 MongoDB Data Loader.payload
+06 MongoDB Data Loader.payload_out -> 07 Pandas Prompt Builder.payload
+06 MongoDB Data Loader.payload_out -> 08 Pandas Code Executor.payload
 ```
 
 Do not use `06 Source Retrieval Merger` in this dummy-only path.
@@ -44,6 +46,8 @@ Connect the same `03 Intent Plan Normalizer.payload_out` to all four source retr
 05 Goodocs Retriever.retrieval_payload -> 06 Source Retrieval Merger.goodocs_retrieval
 
 06 Source Retrieval Merger.retrieval_payload -> 04 Retrieval Payload Adapter.retrieval_payload
-04 Retrieval Payload Adapter.payload -> 05 Pandas Prompt Builder.payload
-04 Retrieval Payload Adapter.payload -> 06 Pandas Code Executor.payload
+04 Retrieval Payload Adapter.payload -> 05 MongoDB Data Store.payload
+05 MongoDB Data Store.payload_out -> 06 MongoDB Data Loader.payload
+06 MongoDB Data Loader.payload_out -> 07 Pandas Prompt Builder.payload
+06 MongoDB Data Loader.payload_out -> 08 Pandas Code Executor.payload
 ```
