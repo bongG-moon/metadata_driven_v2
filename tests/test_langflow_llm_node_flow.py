@@ -135,13 +135,68 @@ def test_intent_normalizer_builds_fallback_jobs_when_llm_omits_jobs(monkeypatch:
 
     assert payload["intent_plan"]["route"] == "multi_retrieval"
     assert [job["source_alias"] for job in payload["retrieval_jobs"]] == [
-        "scope_production_today",
-        "scope_wip_today",
-        "scope_target",
+        "production_today_1",
+        "wip_today_2",
+        "target_3",
     ]
     assert [job["source_type"] for job in payload["retrieval_jobs"]] == ["oracle", "oracle", "goodocs"]
-    assert payload["intent_plan"]["step_plan"]
+    assert payload["intent_plan"]["step_plan"] == []
     assert any("fallback jobs" in item for item in payload["warnings"])
+    assert not any("fallback step_plan" in item for item in payload["warnings"])
+
+
+def test_intent_normalizer_does_not_default_specialized_datasets(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("오늘 생산달성율을 보여줘", "test-session")
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "multi_source_analysis",
+        "analysis_kind": "production_wip_target_rate",
+        "reasoning_steps": ["Need production, WIP, and target values."],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+
+    assert payload["retrieval_jobs"] == []
+    assert payload["intent_plan"]["step_plan"] == []
+    assert payload["intent_plan"]["route"] == "multi_retrieval"
+    assert any("no LLM-provided datasets" in item for item in payload["warnings"])
+
+
+def test_intent_normalizer_builds_generic_rank_fallback_step(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("오늘 재공 상위 3개 보여줘", "test-session")
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "single_retrieval_analysis",
+        "analysis_kind": "rank_top_n",
+        "datasets": ["wip_today"],
+        "top_n": 3,
+        "reasoning_steps": ["Rank current WIP."],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+
+    assert [job["source_alias"] for job in payload["retrieval_jobs"]] == ["wip_today"]
+    assert payload["retrieval_jobs"][0]["params"]["DATE"] == "20260612"
+    assert payload["retrieval_jobs"][0]["primary_quantity_column"] == "WIP"
+    assert payload["intent_plan"]["step_plan"] == [
+        {
+            "step_id": "rank_items",
+            "operation": "rank_top_n",
+            "source_alias": "wip_today",
+            "metric": "WIP",
+            "top_n": 3,
+            "rank_order": "desc",
+        }
+    ]
+    assert any("generic fallback step_plan" in item for item in payload["warnings"])
 
 
 def test_pandas_executor_normalizes_llm_result_column_names() -> None:

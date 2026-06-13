@@ -87,6 +87,15 @@ Langflow의 Gemini/LLM node는 세 위치에 둔다.
 
 LLM 출력은 그대로 신뢰하지 않는다. intent JSON은 normalizer에서 dataset key, source alias, params, filter scope를 metadata와 대조하고, pandas code JSON은 safety check를 통과한 뒤 in-memory DataFrame에만 실행한다.
 
+## Intent Fallback Policy
+
+`03 Intent Plan Normalizer`의 fallback은 LLM 출력이 일부 비어 있을 때 flow가 완전히 끊기지 않도록 하는 최소 보정 장치다. 특정 공정, 제품, 지표 계산식을 코드에 심어두는 용도가 아니다.
+
+- `retrieval_jobs`가 비어 있으면 `analysis_kind`별 기본 dataset을 만들지 않는다. LLM이 JSON에 명시한 `datasets`만 사용해 metadata 기반 job shell을 만든다.
+- `step_plan`이 비어 있으면 `rank_top_n`, `rank_bottom_n`, `detail_rows`처럼 어느 도메인에서도 공통으로 해석 가능한 최소 step만 만든다.
+- `production_wip_target_rate`, `low_output_vs_target`, `overall_production_wip_target`, `date_split_production_plan_gap` 같은 지표 계산/조인 방식은 fallback 코드가 새로 만들지 않는다. 이런 로직은 domain/table/filter metadata와 LLM intent plan/pandas plan을 통해 전달되어야 한다.
+- 질문에서 process/status/product 조건을 추정해야 할 때도 DA/WB/HBM 같은 값을 코드에 직접 고정하지 않고, `domain_items`의 alias/condition과 `main_flow_filters`에 등록된 filter key만 사용한다.
+
 ## Payload Contract
 
 중간 payload는 compact하게 유지한다.

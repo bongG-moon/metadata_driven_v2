@@ -32,9 +32,9 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
     if not raw_jobs and plan.get("intent_type") != "finish":
         raw_jobs = _fallback_retrieval_jobs(plan, llm_json, metadata, payload)
         if raw_jobs:
-            notes.append("retrieval_jobs were missing; built fallback jobs from analysis_kind, datasets, metadata, and request context.")
+            notes.append("retrieval_jobs were missing; built fallback jobs only from LLM-provided datasets, metadata, and request context.")
         else:
-            errors.append("No retrieval_jobs were provided and fallback job generation could not determine datasets.")
+            errors.append("No retrieval_jobs were provided and no LLM-provided datasets were available for generic fallback job generation.")
     for index, raw_job in enumerate(raw_jobs):
         if not isinstance(raw_job, dict):
             continue
@@ -50,14 +50,16 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
         job.setdefault("filters", [])
         job.setdefault("required_columns", dataset_catalog.get("columns", []))
         job["source_type"] = dataset_catalog.get("source_type", job.get("source_type", "dummy"))
+        if "primary_quantity_column" not in job and dataset_catalog.get("primary_quantity_column"):
+            job["primary_quantity_column"] = deepcopy(dataset_catalog["primary_quantity_column"])
         normalized_jobs.append(job)
     plan["retrieval_jobs"] = normalized_jobs
     plan["datasets"] = _unique([job["dataset_key"] for job in normalized_jobs] or llm_json.get("datasets", []))
     if not plan.get("step_plan"):
-        fallback_steps = _fallback_step_plan(plan)
+        fallback_steps = _fallback_step_plan(plan, metadata, payload)
         if fallback_steps:
             plan["step_plan"] = fallback_steps
-            notes.append("step_plan was missing; built a minimal fallback step_plan from retrieval aliases.")
+            notes.append("step_plan was missing; built a minimal generic fallback step_plan from retrieval aliases.")
     plan["route"] = _route_for_intent(plan.get("intent_type"), len(normalized_jobs))
     plan["normalizer_errors"] = errors
     plan["normalizer_notes"] = notes
@@ -96,9 +98,12 @@ def _base_plan(llm_json: dict[str, Any], product_grain: list[str]) -> dict[str, 
         "scope_label",
         "state_product_keys",
         "target_column",
+        "metric",
+        "rank_order",
         "threshold",
         "threshold_percent",
         "top_n",
+        "bottom_n",
     ):
         if key in llm_json:
             plan[key] = deepcopy(llm_json[key])
@@ -119,7 +124,7 @@ def _fallback_retrieval_jobs(
     payload: dict[str, Any],
 ) -> list[dict[str, Any]]:
     catalog = ((metadata.get("table_catalog") or {}).get("datasets") or {}) if isinstance(metadata, dict) else {}
-    datasets = _unique(plan.get("datasets") or _default_datasets(plan.get("analysis_kind")))
+    datasets = _unique(plan.get("datasets"))
     if not datasets:
         return []
     request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
@@ -134,7 +139,7 @@ def _fallback_retrieval_jobs(
         dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
         params = _params_for_dataset(llm_json, dataset_key)
         _fill_required_params(params, dataset_key, dataset_catalog, question, request_date)
-        alias = _fallback_alias(plan.get("analysis_kind"), dataset_key, index)
+        alias = _fallback_alias(plan, dataset_key, index, len(datasets))
         jobs.append(
             {
                 "job_id": f"fallback_{index + 1}_{dataset_key}",
@@ -145,92 +150,103 @@ def _fallback_retrieval_jobs(
                 "filters": _filters_for_dataset(filters, dataset_key, dataset_catalog),
                 "required_columns": dataset_catalog.get("columns", []),
                 "source_type": dataset_catalog.get("source_type", "dummy"),
+                "primary_quantity_column": deepcopy(dataset_catalog.get("primary_quantity_column")),
             }
         )
     return jobs
 
 
-def _default_datasets(analysis_kind: Any) -> list[str]:
-    return {
-        "aggregate_join": ["production_today", "wip_today"],
-        "aggregate_wip_total": ["wip_today"],
-        "date_split_production_plan_gap": ["production", "target"],
-        "detail_rows": ["lot_status"],
-        "equipment_by_model": ["equipment_status"],
-        "equipment_for_previous_products": ["equipment_status"],
-        "lot_count_by_process": ["lot_status"],
-        "lot_quantity_summary": ["lot_status"],
-        "low_output_vs_target": ["production_today", "target"],
-        "overall_production_wip_target": ["production_today", "wip_today", "target"],
-        "production_wip_target_rate": ["production_today", "wip_today", "target"],
-        "rank_top_n": ["wip_today"],
-        "rank_wip_then_join_production": ["wip_today", "production_today"],
-    }.get(str(analysis_kind or ""), [])
-
-
-def _fallback_alias(analysis_kind: Any, dataset_key: str, index: int) -> str:
-    key = (str(analysis_kind or ""), dataset_key, index)
-    aliases = {
-        ("aggregate_join", "production_today", 0): "lpddr5_wb_production_today",
-        ("aggregate_join", "wip_today", 1): "lpddr5_wb_wip_today",
-        ("aggregate_wip_total", "wip_today", 0): "wip_total",
-        ("date_split_production_plan_gap", "production", 0): "yesterday_production",
-        ("date_split_production_plan_gap", "target", 1): "today_target",
-        ("equipment_by_model", "equipment_status", 0): "hbm_equipment_status",
-        ("equipment_for_previous_products", "equipment_status", 0): "equipment_for_previous_products",
-        ("lot_count_by_process", "lot_status", 0): "lot_count_by_process",
-        ("lot_quantity_summary", "lot_status", 0): "da_lot_quantity_summary",
-        ("low_output_vs_target", "production_today", 0): "low_output_production",
-        ("low_output_vs_target", "target", 1): "low_output_target",
-        ("overall_production_wip_target", "production_today", 0): "total_production_today",
-        ("overall_production_wip_target", "wip_today", 1): "total_wip_today",
-        ("overall_production_wip_target", "target", 2): "total_target",
-        ("production_wip_target_rate", "production_today", 0): "scope_production_today",
-        ("production_wip_target_rate", "wip_today", 1): "scope_wip_today",
-        ("production_wip_target_rate", "target", 2): "scope_target",
-        ("rank_top_n", "wip_today", 0): "wip_today_rank",
-        ("rank_wip_then_join_production", "wip_today", 0): "wip_today_rank_scope",
-        ("rank_wip_then_join_production", "production_today", 1): "production_today_for_ranked_products",
-    }
-    return aliases.get(key, dataset_key)
+def _fallback_alias(plan: dict[str, Any], dataset_key: str, index: int, dataset_count: int) -> str:
+    if dataset_count == 1:
+        step_plan = plan.get("step_plan") if isinstance(plan.get("step_plan"), list) else []
+        for step in step_plan:
+            if isinstance(step, dict) and step.get("source_alias"):
+                return str(step["source_alias"])
+        return dataset_key
+    return f"{dataset_key}_{index + 1}"
 
 
 def _fallback_purpose(analysis_kind: Any, dataset_key: str) -> str:
     kind = str(analysis_kind or "")
-    if kind == "rank_wip_then_join_production" and dataset_key == "wip_today":
-        return "rank_source"
-    if kind == "rank_wip_then_join_production":
-        return "dependent_measure_source"
-    if dataset_key in {"production", "production_today"}:
-        return "production_source"
-    if dataset_key == "wip_today":
-        return "wip_source"
-    if dataset_key == "target":
-        return "plan_source"
-    return f"{kind or 'analysis'}_source"
+    return f"{kind or 'analysis'}_source:{dataset_key}"
 
 
-def _fallback_step_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
+def _fallback_step_plan(plan: dict[str, Any], metadata: dict[str, Any], payload: dict[str, Any]) -> list[dict[str, Any]]:
     kind = str(plan.get("analysis_kind") or "")
     jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
-    aliases = {job.get("dataset_key"): job.get("source_alias") for job in jobs if isinstance(job, dict)}
     first_alias = jobs[0].get("source_alias") if jobs and isinstance(jobs[0], dict) else ""
-    if kind == "aggregate_wip_total":
-        return [{"step_id": "sum_wip", "operation": "aggregate_sum", "source_alias": first_alias, "metric": "WIP"}]
-    if kind == "rank_top_n":
-        return [{"step_id": "rank_top_n", "operation": "rank_top_n", "source_alias": first_alias, "metric": "WIP"}]
-    if kind == "detail_rows":
-        return [{"step_id": "detail_rows", "operation": "detail_rows", "source_alias": first_alias}]
-    if kind == "rank_wip_then_join_production":
+    if kind in {"rank_top_n", "rank_bottom_n"} and first_alias:
         return [
-            {"step_id": "rank_products", "operation": "rank_top_n_by_group", "source_alias": aliases.get("wip_today", first_alias), "metric": "WIP"},
-            {"step_id": "join_production", "operation": "join_measure_for_ranked_products", "source_alias": aliases.get("production_today", "production_today_for_ranked_products"), "metric": "PRODUCTION"},
+            {
+                "step_id": "rank_items",
+                "operation": kind,
+                "source_alias": first_alias,
+                "metric": _fallback_metric(plan, jobs[0], metadata),
+                "top_n": _fallback_rank_n(plan, payload),
+                "rank_order": _fallback_rank_order(plan, payload, kind),
+            }
         ]
-    if kind in {"aggregate_join", "production_wip_target_rate", "low_output_vs_target", "overall_production_wip_target", "date_split_production_plan_gap"}:
-        return [{"step_id": f"{kind}_join", "operation": kind, "source_aliases": [job.get("source_alias") for job in jobs]}]
-    if kind in {"lot_count_by_process", "lot_quantity_summary", "equipment_for_previous_products", "equipment_by_model"}:
-        return [{"step_id": kind, "operation": kind, "source_alias": first_alias}]
+    if kind == "detail_rows" and first_alias:
+        return [{"step_id": "detail_rows", "operation": "detail_rows", "source_alias": first_alias}]
     return []
+
+
+def _fallback_metric(plan: dict[str, Any], job: dict[str, Any], metadata: dict[str, Any]) -> str:
+    for key in ("metric", "target_column"):
+        value = plan.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    quantity = job.get("primary_quantity_column")
+    if isinstance(quantity, str) and quantity.strip():
+        return quantity.strip()
+    if isinstance(quantity, list):
+        for item in quantity:
+            text = str(item or "").strip()
+            if text:
+                return text
+    catalog = ((metadata.get("table_catalog") or {}).get("datasets") or {}) if isinstance(metadata, dict) else {}
+    dataset_key = str(job.get("dataset_key") or "")
+    dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
+    quantity = dataset_catalog.get("primary_quantity_column")
+    if isinstance(quantity, str) and quantity.strip():
+        return quantity.strip()
+    if isinstance(quantity, list):
+        for item in quantity:
+            text = str(item or "").strip()
+            if text:
+                return text
+    return ""
+
+
+def _fallback_rank_n(plan: dict[str, Any], payload: dict[str, Any]) -> int:
+    for key in ("top_n", "bottom_n"):
+        value = plan.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+        if isinstance(value, str) and value.isdigit() and int(value) > 0:
+            return int(value)
+    request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+    question = str(request.get("question") or "")
+    match = re.search(r"\b(\d{1,2})\b", question)
+    if match:
+        return int(match.group(1))
+    return 5
+
+
+def _fallback_rank_order(plan: dict[str, Any], payload: dict[str, Any], kind: str) -> str:
+    order = str(plan.get("rank_order") or "").strip().lower()
+    if order in {"asc", "ascending"}:
+        return "asc"
+    if order in {"desc", "descending"}:
+        return "desc"
+    question = ""
+    request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+    if isinstance(request, dict):
+        question = str(request.get("question") or "")
+    text = question.lower()
+    if kind == "rank_bottom_n" or "bottom" in text or "lowest" in text or "하위" in question or "낮은" in question:
+        return "asc"
+    return "desc"
 
 
 def _fill_required_params(params: dict[str, Any], dataset_key: str, catalog: dict[str, Any], question: str, request_date: str) -> None:
@@ -259,28 +275,16 @@ def _filters_for_dataset(filters: list[Any], dataset_key: str, catalog: dict[str
 
 def _infer_filters(question: str, metadata: dict[str, Any], analysis_kind: Any, request_date: str) -> list[dict[str, Any]]:
     text = str(question or "")
-    upper = text.upper()
     filters: list[dict[str, Any]] = []
-    if "오늘" in text or "현재" in text:
+    if _mentions_any(text, ["오늘", "현재", "today", "current"]) and _metadata_has_filter(metadata, "DATE"):
         filters.append({"field": "DATE", "op": "eq", "value": request_date})
-    if "LPDDR5" in upper:
-        filters.append({"field": "MODE", "op": "eq", "value": "LPDDR5"})
-    if "HBM" in upper:
-        filters.append({"field": "PKG_TYPE1", "op": "eq", "value": "HBM"})
-    if "HOLD" in upper or "홀드" in text:
-        filters.append({"field": "LOT_HOLD_STAT_CD", "op": "in", "values": ["HOLD", "OnHold"]})
-    if "작업대기" in text:
-        filters.append({"field": "LOT_STAT_CD", "op": "in", "values": ["WAITING"]})
-    process_values = []
-    if _mentions_da(text):
-        process_values.extend(_process_values(metadata, "DA"))
-    if _mentions_wb(text):
-        process_values.extend(_process_values(metadata, "WB"))
-    if process_values:
+    filters.extend(_metadata_term_filters(text, metadata))
+    process_values = _metadata_process_values(text, metadata)
+    if process_values and _metadata_has_filter(metadata, "OPER_NAME"):
         filters.append({"field": "OPER_NAME", "op": "in", "values": _unique(process_values)})
     if str(analysis_kind or "") == "equipment_for_previous_products":
         filters.append({"field": "PRODUCT_GRAIN", "op": "from_state"})
-    return filters
+    return _dedupe_filters(filters)
 
 
 def _attach_state_product_keys(plan: dict[str, Any], payload: dict[str, Any]) -> None:
@@ -315,22 +319,91 @@ def _rows_from_current_data(current_data: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
-def _process_values(metadata: dict[str, Any], group_key: str) -> list[str]:
+def _metadata_term_filters(question: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
+    result: list[dict[str, Any]] = []
+    for section_name in ("product_terms", "status_terms"):
+        terms = domain.get(section_name) if isinstance(domain.get(section_name), dict) else {}
+        for term_key, term in terms.items():
+            if not isinstance(term, dict):
+                continue
+            aliases = term.get("aliases") if isinstance(term.get("aliases"), list) else []
+            match_values = [term_key, term.get("display_name"), *aliases]
+            if not _mentions_any(question, match_values):
+                continue
+            condition = term.get("condition") if isinstance(term.get("condition"), dict) else {}
+            result.extend(_condition_to_filters(condition, metadata))
+    return result
+
+
+def _metadata_process_values(question: str, metadata: dict[str, Any]) -> list[str]:
     domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
     groups = domain.get("process_groups") if isinstance(domain.get("process_groups"), dict) else {}
-    group = groups.get(group_key) if isinstance(groups.get(group_key), dict) else {}
-    values = group.get("processes") if isinstance(group.get("processes"), list) else []
-    return [str(item) for item in values if str(item or "").strip()]
+    result: list[str] = []
+    for group_key, group in groups.items():
+        if not isinstance(group, dict):
+            continue
+        aliases = group.get("aliases") if isinstance(group.get("aliases"), list) else []
+        match_values = [group_key, group.get("display_name"), *aliases]
+        if not _mentions_any(question, match_values):
+            continue
+        values = group.get("processes") if isinstance(group.get("processes"), list) else []
+        result.extend(str(item) for item in values if str(item or "").strip())
+    return _unique(result)
 
 
-def _mentions_da(question: str) -> bool:
-    upper = str(question or "").upper()
-    return "DA" in upper or "D/A" in upper
+def _condition_to_filters(condition: dict[str, Any], metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for field, spec in condition.items():
+        field_name = str(field or "").strip()
+        if not field_name or not _metadata_has_filter(metadata, field_name):
+            continue
+        if isinstance(spec, dict):
+            if spec.get("exists") and spec.get("not_in"):
+                result.append({"field": field_name, "op": "not_empty"})
+            elif spec.get("exists"):
+                result.append({"field": field_name, "op": "not_empty"})
+            elif isinstance(spec.get("in"), list):
+                result.append({"field": field_name, "op": "in", "values": deepcopy(spec["in"])})
+            elif "value" in spec:
+                result.append({"field": field_name, "op": "eq", "value": spec.get("value")})
+        elif isinstance(spec, list):
+            result.append({"field": field_name, "op": "in", "values": deepcopy(spec)})
+        else:
+            result.append({"field": field_name, "op": "eq", "value": spec})
+    return result
 
 
-def _mentions_wb(question: str) -> bool:
-    upper = str(question or "").upper()
-    return "WB" in upper or "W/B" in upper
+def _metadata_has_filter(metadata: dict[str, Any], filter_key: str) -> bool:
+    filters = metadata.get("main_flow_filters") if isinstance(metadata.get("main_flow_filters"), dict) else {}
+    return str(filter_key or "") in filters
+
+
+def _dedupe_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in filters:
+        key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _mentions_any(question: str, aliases: list[Any]) -> bool:
+    return any(_alias_in_text(question, alias) for alias in aliases)
+
+
+def _alias_in_text(question: str, alias: Any) -> bool:
+    text = str(question or "")
+    value = str(alias or "").strip()
+    if not value:
+        return False
+    if re.fullmatch(r"[A-Za-z0-9/.-]{1,4}", value):
+        pattern = r"(?<![A-Za-z0-9])" + re.escape(value) + r"(?![A-Za-z0-9])"
+        return re.search(pattern, text, flags=re.IGNORECASE) is not None
+    return value in text or value.upper() in text.upper()
 
 
 def _extract_lot_id(question: str) -> str:

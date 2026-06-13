@@ -12,8 +12,9 @@
 
 보강 내용:
 
-- LLM intent JSON에 `retrieval_jobs`가 없거나 비어 있어도 `analysis_kind`, `datasets`, metadata, 질문 문맥, 이전 state를 기반으로 fallback retrieval job을 생성한다.
-- `production_wip_target_rate`, `rank_wip_then_join_production`, `aggregate_wip_total`, `low_output_vs_target`, `date_split_production_plan_gap`, `equipment_for_previous_products` 등 주요 16개 regression 범위의 `analysis_kind`에 대해 기본 dataset/alias/step plan을 복구한다.
+- 2026-06-14 기준으로 fallback 범위를 축소했다. LLM intent JSON에 `retrieval_jobs`가 없거나 비어 있으면 `analysis_kind`별 기본 dataset을 만들지 않고, LLM이 명시한 `datasets`만 사용해 metadata 기반 retrieval job shell을 생성한다.
+- `production_wip_target_rate`, `rank_wip_then_join_production`, `aggregate_wip_total`, `low_output_vs_target`, `date_split_production_plan_gap`, `equipment_for_previous_products` 같은 도메인/지표별 dataset, alias, step plan은 fallback 코드가 복구하지 않는다. 이런 구조는 metadata와 LLM plan에서 나와야 한다.
+- `rank_top_n`, `rank_bottom_n`, `detail_rows`처럼 어느 도메인에서도 공통으로 쓸 수 있는 최소 step만 fallback으로 생성한다.
 - LLM이 준 `target_column`, `top_n`, `threshold`, `scope_label`, `state_product_keys` 같은 실행 파라미터를 normalized plan에 보존한다.
 - follow-up 장비 질문에서 이전 `state.current_data.rows`의 product grain을 `state_product_keys`로 복구한다.
 - fallback이 동작하면 `normalizer_notes`와 payload warning에 근거를 남긴다.
@@ -66,7 +67,7 @@
 
 추가 검증:
 
-- LLM이 `retrieval_jobs`를 누락해도 `03 Intent Plan Normalizer`가 fallback jobs와 step plan을 생성하는지 확인.
+- LLM이 `retrieval_jobs`를 누락했을 때, 명시된 `datasets`가 있으면 generic fallback jobs를 만들고 지표별 step plan은 임의 생성하지 않는지 확인.
 - `06 Pandas Code Executor`가 `rank`, `WIP_sum`, `PRODUCTION_sum`을 `WIP_RANK`, `WIP`, `PRODUCTION`으로 표준화하는지 확인.
 - `tools/validate_llm_in_loop.py`도 같은 컬럼 표준화 규칙을 적용하는지 확인.
 
