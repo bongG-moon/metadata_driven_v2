@@ -72,7 +72,7 @@ def _payload(value: Any) -> dict[str, Any]:
 
 
 class RetrievalPayloadAdapter(Component):
-    display_name = "04 Retrieval Payload Adapter"
+    display_name = "05 Retrieval Payload Adapter"
     description = "Converts merged source retrieval payload into main flow runtime_sources and compact source_results."
     inputs = [
         DataInput(name="main_payload", display_name="Main Payload", required=True),

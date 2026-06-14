@@ -110,6 +110,8 @@ def _execute_generated_pandas_code(
         }
 
     rows = result_df.to_dict(orient="records")
+    product_key_columns = _product_key_columns(plan, list(result_df.columns))
+    product_key_values = _product_key_values(rows, product_key_columns)
     return {
         "status": "ok",
         "analysis_kind": plan.get("analysis_kind"),
@@ -117,6 +119,9 @@ def _execute_generated_pandas_code(
         "columns": list(result_df.columns),
         "rows": _json_ready(rows),
         "row_count": len(rows),
+        "product_key_columns": product_key_columns,
+        "product_key_values": product_key_values,
+        "product_key_count": len(product_key_values),
         "intermediate_refs": {},
         "errors": [],
         "safety_passed": True,
@@ -194,6 +199,28 @@ def _order_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.DataF
     return frame[ordered + remaining]
 
 
+def _product_key_columns(plan: dict[str, Any], columns: list[Any]) -> list[str]:
+    available = [str(column) for column in columns]
+    plan_grain = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
+    if plan_grain:
+        return [str(column) for column in plan_grain if str(column) in available]
+    default_keys = ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "TSV_DIE_TYP"]
+    return [column for column in default_keys if column in available]
+
+
+def _product_key_values(rows: list[dict[str, Any]], product_key_columns: list[str]) -> list[dict[str, Any]]:
+    if not product_key_columns:
+        return []
+    values: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        product = {key: row.get(key) for key in product_key_columns if row.get(key) not in {None, ""}}
+        if product and product not in values:
+            values.append(product)
+    return values
+
+
 def _preferred_columns(plan: dict[str, Any]) -> list[str]:
     product_keys = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
     kind = plan.get("analysis_kind")
@@ -227,7 +254,12 @@ def _strip_harmless_pandas_import(code: str) -> str:
         if stripped in {"import pandas as pd", "import pandas"}:
             continue
         lines.append(line)
-    return "\n".join(lines).strip()
+    return _rewrite_pandas_compatibility("\n".join(lines).strip())
+
+
+def _rewrite_pandas_compatibility(code: str) -> str:
+    # Some LLMs emit NumPy-style infinity through pandas. pandas 2.x has no pd.inf.
+    return re.sub(r"(?<![\w.])pd\.inf\b", 'float("inf")', code, flags=re.IGNORECASE)
 
 
 def _check_code_safety(code: str) -> list[str]:
@@ -358,7 +390,7 @@ def _payload(value: Any) -> dict[str, Any]:
 
 
 class PandasCodeExecutor(Component):
-    display_name = "08 Pandas Code Executor"
+    display_name = "07 Pandas Code Executor"
     description = "Parses Gemini/LLM pandas JSON, checks code safety, and executes it against runtime source DataFrames."
     inputs = [
         DataInput(name="payload", display_name="Payload", required=True),

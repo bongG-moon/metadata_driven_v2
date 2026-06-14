@@ -168,7 +168,7 @@ def _pandas_section(payload: dict[str, Any]) -> str:
 
 def _notice_section(payload: dict[str, Any]) -> str:
     notices = []
-    for key in ("warnings", "errors"):
+    for key in ("info", "warnings", "errors"):
         values = payload.get(key)
         if isinstance(values, list) and values:
             notices.append(f"- {key}: `{_inline_value(values)}`")
@@ -219,7 +219,19 @@ def _step_label(step: Any) -> str:
     if not isinstance(step, dict):
         return str(step)
     parts = []
-    for key in ("step_id", "operation", "source_alias", "dataset_key", "group_by", "metric", "join_keys", "output_alias"):
+    for key in (
+        "step_id",
+        "operation",
+        "source_alias",
+        "dataset_key",
+        "group_by",
+        "metric",
+        "top_n",
+        "bottom_n",
+        "rank_order",
+        "join_keys",
+        "output_alias",
+    ):
         value = step.get(key)
         if value not in (None, "", [], {}):
             parts.append(f"{key}={_inline_value(value)}")

@@ -57,14 +57,14 @@ def test_langflow_components_do_not_reuse_input_names_as_output_names() -> None:
 def test_main_flow_files_use_clean_sequential_numbering() -> None:
     expected_files = [
         "00_request_state_loader.py",
-        "01_metadata_context_loader.py",
-        "02_intent_prompt_builder.py",
-        "03_intent_plan_normalizer.py",
-        "04_retrieval_payload_adapter.py",
-        "05_mongodb_data_store.py",
-        "06_mongodb_data_loader.py",
-        "07_pandas_prompt_builder.py",
-        "08_pandas_code_executor.py",
+        "01_mongodb_data_loader.py",
+        "02_metadata_context_loader.py",
+        "03_intent_prompt_builder.py",
+        "04_intent_plan_normalizer.py",
+        "05_retrieval_payload_adapter.py",
+        "06_pandas_prompt_builder.py",
+        "07_pandas_code_executor.py",
+        "08_mongodb_data_store.py",
         "09_answer_prompt_builder.py",
         "10_answer_response_builder.py",
         "11_answer_message_adapter.py",
@@ -89,7 +89,7 @@ def test_main_flow_files_use_clean_sequential_numbering() -> None:
 
 def test_mongodb_metadata_components_expose_full_collection_names() -> None:
     expected_inputs_by_file = {
-        "main_flow/01_metadata_context_loader.py": {
+        "main_flow/02_metadata_context_loader.py": {
             "domain_collection_name",
             "table_catalog_collection_name",
             "main_flow_filter_collection_name",

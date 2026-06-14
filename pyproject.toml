@@ -17,6 +17,10 @@ llm = [
 all = [
   "pymongo>=4.6",
   "langchain-google-genai",
+  "streamlit>=1.37",
+]
+web = [
+  "streamlit>=1.37",
 ]
 
 [tool.pytest.ini_options]

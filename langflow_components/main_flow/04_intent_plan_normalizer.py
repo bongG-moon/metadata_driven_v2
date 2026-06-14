@@ -22,7 +22,7 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
     errors: list[str] = []
     notes: list[str] = []
     if not llm_json:
-        errors.append("Intent LLM response did not contain a JSON object.")
+        errors.append("의도 분석 LLM 응답에서 JSON 객체를 찾지 못했습니다.")
     plan = _base_plan(llm_json, product_grain)
     _attach_state_product_keys(plan, payload)
     plan["llm_intent_json"] = llm_json
@@ -31,6 +31,8 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
     request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
     question = str(request.get("question") or "")
     request_date = _request_date(payload)
+    if _wants_detail_rows(question):
+        _prefer_detail_rows(plan, notes)
     recipe_key, recipe = _matching_analysis_recipe(question, metadata, plan)
     if recipe:
         _apply_analysis_recipe(plan, recipe_key, recipe, metadata, question, request_date, notes)
@@ -39,16 +41,16 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
     if not raw_jobs and plan.get("intent_type") != "finish":
         raw_jobs = _fallback_retrieval_jobs(plan, llm_json, metadata, payload)
         if raw_jobs:
-            notes.append("retrieval_jobs were missing; built fallback jobs only from LLM-provided datasets, metadata, and request context.")
+            notes.append("retrieval_jobs가 없어 LLM이 지정한 datasets, 메타데이터, 요청 문맥을 기준으로 조회 작업을 보완했습니다.")
         else:
-            errors.append("No retrieval_jobs were provided and no LLM-provided datasets were available for generic fallback job generation.")
+            errors.append("retrieval_jobs가 없고 LLM이 지정한 datasets도 없어 조회 작업을 보완할 수 없습니다.")
     _repair_followup_analysis_kind(plan, raw_jobs, catalog, notes)
     for index, raw_job in enumerate(raw_jobs):
         if not isinstance(raw_job, dict):
             continue
         dataset_key = str(raw_job.get("dataset_key") or "").strip()
         if not dataset_key:
-            errors.append(f"retrieval_jobs[{index}] is missing dataset_key.")
+            errors.append(f"retrieval_jobs[{index}]에 dataset_key가 없습니다.")
             continue
         dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
         job = deepcopy(raw_job)
@@ -63,7 +65,7 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
         original_filters = deepcopy(job.get("filters")) if isinstance(job.get("filters"), list) else []
         job["filters"] = _augmented_filters_for_job(job, plan, metadata, question, request_date)
         if params != original_params or job["filters"] != original_filters:
-            _append_once(notes, "retrieval_jobs were augmented with metadata-derived params/filters.")
+            _append_once(notes, "메타데이터를 기준으로 조회 params/filters를 보완했습니다.")
         job["required_columns"] = _normalize_required_columns(
             job.get("required_columns"),
             dataset_catalog,
@@ -74,14 +76,16 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
             job["primary_quantity_column"] = deepcopy(dataset_catalog["primary_quantity_column"])
         normalized_jobs.append(job)
     plan["retrieval_jobs"] = normalized_jobs
-    _normalize_step_plan_columns(plan, normalized_jobs, catalog)
     plan["datasets"] = _unique([job["dataset_key"] for job in normalized_jobs] or llm_json.get("datasets", []))
     if not plan.get("step_plan"):
         fallback_steps = _fallback_step_plan(plan, metadata, payload)
         if fallback_steps:
             plan["step_plan"] = fallback_steps
-            notes.append("step_plan was missing; built a minimal generic fallback step_plan from retrieval aliases.")
+            notes.append("step_plan이 없어 조회 alias를 기준으로 기본 분석 단계를 보완했습니다.")
+    _normalize_step_plan_columns(plan, normalized_jobs, catalog)
+    _augment_step_plan_defaults(plan, normalized_jobs, metadata, payload)
     plan["route"] = _route_for_intent(plan.get("intent_type"), len(normalized_jobs))
+    _mark_state_hydration_need(plan, payload, question, notes)
     plan["normalizer_errors"] = errors
     plan["normalizer_notes"] = notes
 
@@ -90,9 +94,9 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
     next_payload["retrieval_jobs"] = normalized_jobs
     next_payload["metadata_context"] = _metadata_context(plan)
     if errors:
-        next_payload["warnings"] = list(next_payload.get("warnings", [])) + [f"intent_normalizer: {item}" for item in errors]
+        next_payload["warnings"] = list(next_payload.get("warnings", [])) + [f"의도 정규화 오류: {item}" for item in errors]
     if notes:
-        next_payload["warnings"] = list(next_payload.get("warnings", [])) + [f"intent_normalizer: {item}" for item in notes]
+        next_payload["info"] = list(next_payload.get("info", [])) + [f"의도 정규화: {item}" for item in notes]
     return next_payload
 
 
@@ -101,10 +105,11 @@ def _base_plan(llm_json: dict[str, Any], product_grain: list[str]) -> dict[str, 
     analysis_kind = str(llm_json.get("analysis_kind") or "none").strip()
     step_plan = llm_json.get("step_plan") if isinstance(llm_json.get("step_plan"), list) else []
     retrieval_jobs = llm_json.get("retrieval_jobs") if isinstance(llm_json.get("retrieval_jobs"), list) else []
+    product_grain_value = _normalized_product_grain(llm_json, product_grain)
     plan = {
         "intent_type": intent_type,
         "analysis_kind": analysis_kind,
-        "product_grain": llm_json.get("product_grain") if isinstance(llm_json.get("product_grain"), list) else product_grain,
+        "product_grain": product_grain_value,
         "datasets": _unique(llm_json.get("datasets", [])),
         "params_by_dataset": llm_json.get("params_by_dataset", {}) if isinstance(llm_json.get("params_by_dataset"), dict) else {},
         "filters": llm_json.get("filters", []) if isinstance(llm_json.get("filters"), list) else [],
@@ -121,14 +126,104 @@ def _base_plan(llm_json: dict[str, Any], product_grain: list[str]) -> dict[str, 
         "target_column",
         "metric",
         "rank_order",
+        "analysis_output_columns",
         "threshold",
         "threshold_percent",
         "top_n",
         "bottom_n",
+        "requires_full_state_hydrate",
+        "state_hydrate_mode",
     ):
         if key in llm_json:
             plan[key] = deepcopy(llm_json[key])
+    _absorb_loose_llm_fields(plan, llm_json)
     return plan
+
+
+def _normalized_product_grain(llm_json: dict[str, Any], default_product_grain: list[str]) -> list[str]:
+    if isinstance(llm_json.get("product_grain"), list):
+        return _unique(llm_json["product_grain"])
+    if "group_by" in llm_json and isinstance(llm_json.get("group_by"), list):
+        return _unique(llm_json["group_by"])
+    return _unique(default_product_grain)
+
+
+def _absorb_loose_llm_fields(plan: dict[str, Any], llm_json: dict[str, Any]) -> None:
+    rank = llm_json.get("rank") if isinstance(llm_json.get("rank"), dict) else {}
+    if rank:
+        if not plan.get("metric"):
+            for key in ("metric", "rank_column", "quantity_column"):
+                value = rank.get(key)
+                if isinstance(value, str) and value.strip():
+                    plan["metric"] = value.strip()
+                    break
+        if "top_n" not in plan and rank.get("top_n") not in (None, "", [], {}):
+            plan["top_n"] = deepcopy(rank["top_n"])
+        if "bottom_n" not in plan and rank.get("bottom_n") not in (None, "", [], {}):
+            plan["bottom_n"] = deepcopy(rank["bottom_n"])
+        if not plan.get("rank_order"):
+            order = _canonical_rank_order(rank.get("sort_order") or rank.get("order") or rank.get("rank_order"))
+            if order:
+                plan["rank_order"] = order
+    if "group_by" in llm_json and isinstance(llm_json.get("group_by"), list) and not isinstance(llm_json.get("product_grain"), list):
+        plan["product_grain"] = _unique(llm_json["group_by"])
+    if "analysis_output_columns" not in plan and isinstance(llm_json.get("output_columns"), list):
+        plan["analysis_output_columns"] = _unique(llm_json["output_columns"])
+
+
+def _canonical_rank_order(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"desc", "descending", "top", "highest", "most", "max", "maximum"}:
+        return "desc"
+    if text in {"asc", "ascending", "bottom", "lowest", "least", "min", "minimum"}:
+        return "asc"
+    return ""
+
+
+def _wants_detail_rows(question: str) -> bool:
+    text = str(question or "").strip()
+    lower = text.lower()
+    no_aggregation_terms = [
+        "집계하지 말고",
+        "집계 없이",
+        "합산하지 말고",
+        "합산 없이",
+        "그룹핑하지 말고",
+        "그룹화하지 말고",
+        "groupby 없이",
+        "group by 없이",
+        "without aggregation",
+        "without groupby",
+        "without group by",
+    ]
+    if _mentions_any(text, no_aggregation_terms):
+        return True
+    detail_patterns = [
+        r"(상세|세부|원본)\s*(데이터|자료|row|rows|로우|레코드)",
+        r"(전체|모든)\s*(row|rows|로우|레코드)",
+        r"(raw|detail)\s*(data|rows?|records?)",
+    ]
+    return any(re.search(pattern, lower, re.IGNORECASE) for pattern in detail_patterns)
+
+
+def _prefer_detail_rows(plan: dict[str, Any], notes: list[str]) -> None:
+    plan["detail_rows_requested"] = True
+    if str(plan.get("analysis_kind") or "") != "detail_rows":
+        plan["original_analysis_kind"] = plan.get("analysis_kind")
+        plan["analysis_kind"] = "detail_rows"
+    if str(plan.get("intent_type") or "") not in {"finish", "followup_transform"}:
+        plan["intent_type"] = "detail_lookup"
+    plan["product_grain"] = []
+    step_plan = plan.get("step_plan") if isinstance(plan.get("step_plan"), list) else []
+    if step_plan and not any(_is_detail_step(step) for step in step_plan):
+        plan["step_plan"] = []
+        _append_once(notes, "상세 row 요청이므로 recipe 집계 대신 원본 row를 유지하도록 조정했습니다.")
+
+
+def _is_detail_step(step: Any) -> bool:
+    if not isinstance(step, dict):
+        return False
+    return str(step.get("operation") or step.get("step_id") or "") == "detail_rows"
 
 
 def _params_for_dataset(llm_json: dict[str, Any], dataset_key: str) -> dict[str, Any]:
@@ -199,17 +294,19 @@ def _apply_analysis_recipe(
 ) -> None:
     default_kind = str(recipe.get("default_analysis_kind") or recipe_key).strip()
     current_kind = str(plan.get("analysis_kind") or "none")
-    if default_kind and current_kind in {"", "none", "aggregate", "aggregate_join", "generic_analysis"}:
+    detail_requested = bool(plan.get("detail_rows_requested"))
+    if not detail_requested and default_kind and current_kind in {"", "none", "aggregate", "aggregate_join", "generic_analysis"}:
         plan["analysis_kind"] = default_kind
-    if default_kind and (not plan.get("datasets") or not plan.get("retrieval_jobs")):
+    if not detail_requested and default_kind and (not plan.get("datasets") or not plan.get("retrieval_jobs")):
         plan["analysis_kind"] = default_kind
     intent_type = str(recipe.get("intent_type") or "").strip()
-    if intent_type and (not plan.get("retrieval_jobs") or str(plan.get("intent_type") or "") == "single_retrieval_analysis"):
+    if not detail_requested and intent_type and (not plan.get("retrieval_jobs") or str(plan.get("intent_type") or "") == "single_retrieval_analysis"):
         plan["intent_type"] = intent_type
     plan["matched_analysis_recipe"] = recipe_key
     plan["recipe_grain_policy"] = recipe.get("grain_policy", "")
-    plan["product_grain"] = _resolve_recipe_grain(question, recipe, metadata, plan)
-    _apply_recipe_defaults(plan, recipe, question)
+    plan["product_grain"] = [] if detail_requested else _resolve_recipe_grain(question, recipe, metadata, plan)
+    if not detail_requested:
+        _apply_recipe_defaults(plan, recipe, question)
 
     selected = _recipe_datasets(recipe, metadata, question)
     if selected:
@@ -238,12 +335,12 @@ def _apply_analysis_recipe(
         )
     if jobs_to_add:
         plan["retrieval_jobs"] = [*existing_jobs, *jobs_to_add]
-    if not plan.get("step_plan"):
+    if not detail_requested and not plan.get("step_plan"):
         step = _recipe_step_plan(plan, recipe_key, recipe)
         if step:
             plan["step_plan"] = [step]
     if selected or jobs_to_add:
-        _append_once(notes, f"analysis recipe '{recipe_key}' augmented missing datasets/retrieval jobs from metadata.")
+        _append_once(notes, f"분석 recipe '{recipe_key}' 기준으로 누락된 datasets/retrieval_jobs를 메타데이터에서 보완했습니다.")
 
 
 def _align_existing_jobs_to_recipe_families(
@@ -285,7 +382,7 @@ def _align_existing_jobs_to_recipe_families(
     if changed:
         plan["params_by_dataset"] = params_by_dataset
         plan["datasets"] = _unique([str(job.get("dataset_key") or "") for job in existing_jobs if isinstance(job, dict)])
-        _append_once(notes, f"analysis recipe '{recipe_key}' aligned dataset families to metadata date/source scope.")
+        _append_once(notes, f"분석 recipe '{recipe_key}' 기준으로 dataset family를 메타데이터의 날짜/소스 범위에 맞게 정렬했습니다.")
 
 
 def _apply_recipe_defaults(plan: dict[str, Any], recipe: dict[str, Any], question: str) -> None:
@@ -398,6 +495,11 @@ def _recipe_required_columns(
     family: str,
     dataset_catalog: dict[str, Any],
 ) -> list[str]:
+    if plan.get("detail_rows_requested") or str(plan.get("analysis_kind") or "") == "detail_rows":
+        detail_columns = dataset_catalog.get("default_detail_columns")
+        if isinstance(detail_columns, list) and detail_columns:
+            return _unique(detail_columns)
+        return _unique(dataset_catalog.get("columns", []))
     columns = []
     date_columns = (dataset_catalog.get("filter_mappings") or {}).get("DATE") if isinstance(dataset_catalog.get("filter_mappings"), dict) else []
     columns.extend(_unique(date_columns))
@@ -529,6 +631,41 @@ def _normalize_step_plan_columns(plan: dict[str, Any], jobs: list[dict[str, Any]
                     step[key] = mapped[0]
 
 
+def _augment_step_plan_defaults(
+    plan: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    steps = plan.get("step_plan") if isinstance(plan.get("step_plan"), list) else []
+    if not steps:
+        return
+    alias_to_job = {str(job.get("source_alias") or job.get("dataset_key") or ""): job for job in jobs if isinstance(job, dict)}
+    first_job = jobs[0] if jobs else {}
+    analysis_kind = str(plan.get("analysis_kind") or "")
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        operation = str(step.get("operation") or analysis_kind)
+        if operation not in {"rank_top_n", "rank_bottom_n"} and analysis_kind not in {"rank_top_n", "rank_bottom_n"}:
+            continue
+        rank_kind = operation if operation in {"rank_top_n", "rank_bottom_n"} else analysis_kind
+        source_alias = str(step.get("source_alias") or "")
+        job = alias_to_job.get(source_alias) or first_job
+        if not step.get("metric"):
+            metric = _fallback_metric(plan, job, metadata) if isinstance(job, dict) else ""
+            if metric:
+                step["metric"] = metric
+        if "top_n" not in step and "bottom_n" not in step:
+            step["top_n"] = _fallback_rank_n(plan, payload)
+        if not step.get("rank_order"):
+            step["rank_order"] = _fallback_rank_order(plan, payload, rank_kind)
+        if "group_by" not in step and isinstance(plan.get("product_grain"), list):
+            step["group_by"] = deepcopy(plan["product_grain"])
+        if "output_columns" not in step and isinstance(plan.get("analysis_output_columns"), list):
+            step["output_columns"] = deepcopy(plan["analysis_output_columns"])
+
+
 def _map_logical_columns(columns: list[Any], catalog: dict[str, Any]) -> list[str]:
     catalog_columns = set(_unique(catalog.get("columns", [])))
     mappings = catalog.get("filter_mappings") if isinstance(catalog.get("filter_mappings"), dict) else {}
@@ -568,18 +705,25 @@ def _fallback_step_plan(plan: dict[str, Any], metadata: dict[str, Any], payload:
     jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
     first_alias = jobs[0].get("source_alias") if jobs and isinstance(jobs[0], dict) else ""
     if kind in {"rank_top_n", "rank_bottom_n"} and first_alias:
-        return [
-            {
-                "step_id": "rank_items",
-                "operation": kind,
-                "source_alias": first_alias,
-                "metric": _fallback_metric(plan, jobs[0], metadata),
-                "top_n": _fallback_rank_n(plan, payload),
-                "rank_order": _fallback_rank_order(plan, payload, kind),
-            }
-        ]
+        step = {
+            "step_id": "rank_items",
+            "operation": kind,
+            "source_alias": first_alias,
+            "metric": _fallback_metric(plan, jobs[0], metadata),
+            "top_n": _fallback_rank_n(plan, payload),
+            "rank_order": _fallback_rank_order(plan, payload, kind),
+        }
+        if isinstance(plan.get("product_grain"), list):
+            step["group_by"] = deepcopy(plan["product_grain"])
+        if isinstance(plan.get("analysis_output_columns"), list):
+            step["output_columns"] = deepcopy(plan["analysis_output_columns"])
+        return [step]
     if kind == "detail_rows" and first_alias:
-        return [{"step_id": "detail_rows", "operation": "detail_rows", "source_alias": first_alias}]
+        aliases = _unique([str(job.get("source_alias") or "") for job in jobs if isinstance(job, dict) and job.get("source_alias")])
+        step = {"step_id": "detail_rows", "operation": "detail_rows", "source_alias": first_alias}
+        if len(aliases) > 1:
+            step["source_aliases"] = aliases
+        return [step]
     return []
 
 
@@ -622,15 +766,15 @@ def _fallback_rank_n(plan: dict[str, Any], payload: dict[str, Any]) -> int:
     match = re.search(r"\b(\d{1,2})\b", question)
     if match:
         return int(match.group(1))
+    if _mentions_any(question, ["가장", "최대", "최고", "제일", "most", "highest", "top"]):
+        return 1
     return 5
 
 
 def _fallback_rank_order(plan: dict[str, Any], payload: dict[str, Any], kind: str) -> str:
-    order = str(plan.get("rank_order") or "").strip().lower()
-    if order in {"asc", "ascending"}:
-        return "asc"
-    if order in {"desc", "descending"}:
-        return "desc"
+    order = _canonical_rank_order(plan.get("rank_order"))
+    if order:
+        return order
     question = ""
     request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
     if isinstance(request, dict):
@@ -746,6 +890,10 @@ def _attach_state_product_keys(plan: dict[str, Any], payload: dict[str, Any]) ->
     product_grain = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
     current_data = state.get("current_data") if isinstance(state.get("current_data"), dict) else {}
+    product_rows = _product_keys_from_state_summary(current_data, product_grain)
+    if product_rows:
+        plan["state_product_keys"] = product_rows
+        return
     rows = _rows_from_current_data(current_data)
     product_rows = []
     for row in rows:
@@ -756,6 +904,25 @@ def _attach_state_product_keys(plan: dict[str, Any], payload: dict[str, Any]) ->
             product_rows.append(product)
     if product_rows:
         plan["state_product_keys"] = product_rows
+
+
+def _product_keys_from_state_summary(current_data: dict[str, Any], product_grain: list[Any]) -> list[dict[str, Any]]:
+    values = current_data.get("product_key_values")
+    if not isinstance(values, list):
+        return []
+    state_columns = current_data.get("product_key_columns") if isinstance(current_data.get("product_key_columns"), list) else []
+    grain = [str(item) for item in product_grain if str(item or "").strip()] or [str(item) for item in state_columns]
+    product_rows: list[dict[str, Any]] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        if grain:
+            product = {key: item.get(key) for key in grain if item.get(key) not in {None, ""}}
+        else:
+            product = {str(key): value for key, value in item.items() if value not in {None, ""}}
+        if product and product not in product_rows:
+            product_rows.append(product)
+    return product_rows
 
 
 def _repair_followup_analysis_kind(
@@ -778,7 +945,116 @@ def _repair_followup_analysis_kind(
     if any(family in {"equipment", "capacity"} for family in families):
         if str(plan.get("analysis_kind") or "") in {"equipment_by_model", "detail_rows", "none"}:
             plan["analysis_kind"] = "equipment_for_previous_products"
-            _append_once(notes, "follow-up plan was aligned to previous product keys from state.")
+            _append_once(notes, "후속 질문 계획을 이전 state의 제품 key 기준으로 조정했습니다.")
+
+
+def _mark_state_hydration_need(
+    plan: dict[str, Any],
+    payload: dict[str, Any],
+    question: str,
+    notes: list[str],
+) -> None:
+    state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+    current_data = state.get("current_data") if isinstance(state.get("current_data"), dict) else {}
+    if not _has_mongo_data_ref(current_data):
+        return
+
+    explicit = plan.get("requires_full_state_hydrate")
+    if _truthy_value(explicit):
+        plan["requires_full_state_hydrate"] = True
+        plan["state_hydrate_mode"] = "full"
+        plan["state_hydrate_reason"] = "llm_requested_full_state_rows"
+        _append_once(notes, "후속 질문 계획에서 MongoDB의 이전 결과 전체 row 복원을 요청했습니다.")
+        return
+
+    if _state_product_keys_are_enough(plan, question):
+        plan.setdefault("state_hydrate_mode", "summary")
+        return
+
+    if _followup_needs_previous_rows(plan, question):
+        plan["requires_full_state_hydrate"] = True
+        plan["state_hydrate_mode"] = "full"
+        plan["state_hydrate_reason"] = "followup_analysis_needs_previous_rows"
+        _append_once(notes, "후속 분석에 이전 결과 row가 필요하여 pandas 실행 전에 MongoDB에서 전체 row를 복원하도록 표시했습니다.")
+
+
+def _has_mongo_data_ref(current_data: dict[str, Any]) -> bool:
+    data_ref = current_data.get("data_ref")
+    if isinstance(data_ref, dict) and str(data_ref.get("store") or "").lower() == "mongodb":
+        return True
+    data = current_data.get("data")
+    if isinstance(data, dict):
+        nested_ref = data.get("data_ref")
+        return isinstance(nested_ref, dict) and str(nested_ref.get("store") or "").lower() == "mongodb"
+    return False
+
+
+def _state_product_keys_are_enough(plan: dict[str, Any], question: str) -> bool:
+    if str(plan.get("analysis_kind") or "") != "equipment_for_previous_products":
+        return False
+    if not plan.get("state_product_keys"):
+        return False
+    if _mentions_any(question, ["전체", "모든", "상세", "세부", "원본", "row", "rows", "records", "full"]):
+        return False
+    return True
+
+
+def _followup_needs_previous_rows(plan: dict[str, Any], question: str) -> bool:
+    if str(plan.get("intent_type") or "") != "followup_transform" and not bool(plan.get("depends_on_state")):
+        return False
+    jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
+    datasets = plan.get("datasets") if isinstance(plan.get("datasets"), list) else []
+    if not jobs and not datasets:
+        return True
+    if str(plan.get("analysis_kind") or "") in {"detail_rows", "rank_top_n"}:
+        return True
+    previous_terms = [
+        "이전",
+        "앞",
+        "위",
+        "방금",
+        "직전",
+        "결과",
+        "데이터",
+        "테이블",
+        "목록",
+        "previous",
+        "prior",
+        "current data",
+        "result",
+    ]
+    row_operation_terms = [
+        "전체",
+        "모든",
+        "상세",
+        "세부",
+        "원본",
+        "다시",
+        "정렬",
+        "상위",
+        "하위",
+        "필터",
+        "추려",
+        "골라",
+        "집계",
+        "합계",
+        "평균",
+        "비교",
+        "제품별",
+        "공정별",
+        "row",
+        "rows",
+        "records",
+        "full",
+        "all",
+    ]
+    return _mentions_any(question, previous_terms) and _mentions_any(question, row_operation_terms)
+
+
+def _truthy_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on", "full", "all", "rows", "hydrate_full"}
 
 
 def _rows_from_current_data(current_data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1116,7 +1392,7 @@ def _unique(values: Any) -> list[str]:
 
 
 class IntentPlanNormalizer(Component):
-    display_name = "03 Intent Plan Normalizer"
+    display_name = "04 Intent Plan Normalizer"
     description = "Normalizes the Gemini/LLM intent JSON into retrieval jobs for the next Langflow nodes."
     inputs = [
         DataInput(name="payload", display_name="Payload", required=True),

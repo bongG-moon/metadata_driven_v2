@@ -274,7 +274,7 @@ def _json_ready(value: Any) -> Any:
 
 
 class MetadataContextLoader(Component):
-    display_name = "01 Metadata Context Loader"
+    display_name = "02 Metadata Context Loader"
     description = "Loads domain, table catalog, and main-flow-filter metadata from MongoDB."
     inputs = [
         DataInput(name="payload", display_name="Payload", required=True),

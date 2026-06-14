@@ -632,7 +632,12 @@ def strip_harmless_pandas_import(code: str) -> str:
         if stripped in {"import pandas as pd", "import pandas"}:
             continue
         lines.append(line)
-    return "\n".join(lines).strip()
+    return rewrite_pandas_compatibility("\n".join(lines).strip())
+
+
+def rewrite_pandas_compatibility(code: str) -> str:
+    # Keep validation behavior aligned with the production Langflow component.
+    return re.sub(r"(?<![\w.])pd\.inf\b", 'float("inf")', code, flags=re.IGNORECASE)
 
 
 def check_code_safety(code: str) -> list[str]:

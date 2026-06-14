@@ -1,0 +1,593 @@
+# Component LLM Validation Report
+
+- Passed: 7/16
+- Path: 02 Intent Prompt Builder -> Gemini -> 03 Intent Plan Normalizer -> reference retrieval -> 07 Pandas Prompt Builder -> Gemini -> 08 Pandas Code Executor -> 10 Answer Response Builder
+
+## PASS multi_step_rank_wip_with_production
+
+- question: `오늘 DA, WB공정에서 각각 재공 상위 3개 제품을 뽑아주고 해당 제품들의 오늘 생산량도 보여줘`
+- llm intent: `multi_step_analysis` / `rank_wip_then_join_production`
+- normalized intent: `multi_step_analysis` / `rank_wip_then_join_production`
+- datasets: `['wip_today', 'production_today']`
+- row_count: `12`
+- columns: `['RANK_GROUP', 'WIP_RANK', 'TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP', 'PRODUCTION']`
+- step_ids: `['rank_wip_da', 'rank_wip_wb', 'join_prod_da', 'join_prod_wb']`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['production_today', 'wip_today']`
+  - actual: `['production_today', 'wip_today']`
+- PASS expected_columns
+  - expected: `['PRODUCTION', 'RANK_GROUP', 'WIP']`
+  - actual: `['RANK_GROUP', 'WIP_RANK', 'TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP', 'PRODUCTION']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `12`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `multi_step_analysis`
+  - actual: `multi_step_analysis`
+- PASS expected_analysis_kind
+  - expected: `rank_wip_then_join_production`
+  - actual: `rank_wip_then_join_production`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+- PASS expected_params_by_dataset
+  - expected: `{'wip_today': {'DATE': '20260612'}, 'production_today': {'DATE': '20260612'}}`
+  - actual: `{'wip_today': [{'DATE': '20260612'}, {'DATE': '20260612'}], 'production_today': [{'DATE': '20260612'}, {'DATE': '20260612'}]}`
+- PASS rank_group_split
+  - expected: `['DA', 'WB']`
+  - actual: `['DA', 'WB']`
+
+## PASS hold_history_detail
+
+- question: `T1234567GEN1 LOT의 HOLD이력 알려줘`
+- llm intent: `detail_lookup` / `detail_rows`
+- normalized intent: `detail_lookup` / `detail_rows`
+- datasets: `['hold_history']`
+- row_count: `2`
+- columns: `['LOT_ID', 'HOLD_TM', 'HOLD_CD', 'HOLD_DESC', 'HOLD_USER_ID', 'EVENT_CD']`
+- step_ids: `['detail_rows']`
+- normalizer_notes: `['step_plan was missing; built a minimal generic fallback step_plan from retrieval aliases.']`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['hold_history']`
+  - actual: `['hold_history']`
+- PASS expected_columns
+  - expected: `['HOLD_CD', 'HOLD_DESC', 'HOLD_TM', 'LOT_ID']`
+  - actual: `['LOT_ID', 'HOLD_TM', 'HOLD_CD', 'HOLD_DESC', 'HOLD_USER_ID', 'EVENT_CD']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `2`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `detail_lookup`
+  - actual: `detail_lookup`
+- PASS expected_analysis_kind
+  - expected: `detail_rows`
+  - actual: `detail_rows`
+- PASS expected_filter_fields
+  - expected: `['LOT_ID']`
+  - actual: `['LOT_ID']`
+- PASS expected_params_by_dataset
+  - expected: `{'hold_history': {'LOT_ID': 'T1234567GEN1'}}`
+  - actual: `{'hold_history': [{'LOT_ID': 'T1234567GEN1'}]}`
+
+## PASS hold_lot_list
+
+- question: `현재 hold된 lot list 알려줘`
+- llm intent: `detail_lookup` / `detail_rows`
+- normalized intent: `detail_lookup` / `detail_rows`
+- datasets: `['lot_status']`
+- row_count: `241`
+- columns: `['LOT_ID', 'OPER_SHORT_DESC', 'LOT_STAT_CD', 'LOT_HOLD_STAT_CD', 'TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'TSV_DIE_TYP', 'DEVICE', 'SUB_PROD_QTY', 'WF_QTY', 'IN_TAT', 'CUM_TAT', 'EQP_ID', 'WORK_DT']`
+- step_ids: `['s1']`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- PASS expected_columns
+  - expected: `['LOT_HOLD_STAT_CD', 'LOT_ID']`
+  - actual: `['LOT_ID', 'OPER_SHORT_DESC', 'LOT_STAT_CD', 'LOT_HOLD_STAT_CD', 'TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'TSV_DIE_TYP', 'DEVICE', 'SUB_PROD_QTY', 'WF_QTY', 'IN_TAT', 'CUM_TAT', 'EQP_ID', 'WORK_DT']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `241`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `detail_lookup`
+  - actual: `detail_lookup`
+- PASS expected_analysis_kind
+  - expected: `detail_rows`
+  - actual: `detail_rows`
+- PASS expected_filter_fields
+  - expected: `['LOT_HOLD_STAT_CD']`
+  - actual: `['LOT_HOLD_STAT_CD']`
+
+## PASS da_wip_top_product
+
+- question: `현재 da에서 재공이 가장 많은 제품 알려줘`
+- llm intent: `single_retrieval_analysis` / `rank_top_n`
+- normalized intent: `single_retrieval_analysis` / `rank_top_n`
+- datasets: `['wip_today']`
+- row_count: `1`
+- columns: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP']`
+- step_ids: `['rank_wip_by_product']`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- PASS expected_columns
+  - expected: `['WIP']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_analysis_kind
+  - expected: `rank_top_n`
+  - actual: `rank_top_n`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+
+## FAIL followup_equipment_for_product
+
+- question: `이 제품에 할당된 장비 현황 알려줘`
+- llm intent: `followup_transform` / `equipment_by_model`
+- normalized intent: `followup_transform` / `equipment_by_model`
+- datasets: `['equipment_status']`
+- row_count: `3`
+- columns: `['EQP_MODEL', 'EQP_COUNT', 'PRESS_CNT']`
+- step_ids: `['get_equipment_status']`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['equipment_status']`
+  - actual: `['equipment_status']`
+- FAIL expected_columns
+  - expected: `['EQPID', 'EQP_MODEL']`
+  - actual: `['EQP_MODEL', 'EQP_COUNT', 'PRESS_CNT']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `3`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `followup_transform`
+  - actual: `followup_transform`
+- FAIL expected_analysis_kind
+  - expected: `equipment_for_previous_products`
+  - actual: `equipment_by_model`
+- FAIL expected_filter_fields
+  - expected: `['PRODUCT_GRAIN']`
+  - actual: `['DEN', 'LEAD', 'MCP_NO', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'TECH']`
+- FAIL followup_uses_state
+  - expected: `state_product_keys not empty`
+  - actual: `None`
+
+## FAIL lpddr5_wb_production_and_wip
+
+- question: `현재 MODE값이 LPDDR5인 제품의 W/B공정에서 생산량과 재공 수량 알려줘`
+- llm intent: `multi_source_analysis` / `aggregate_join`
+- normalized intent: `multi_source_analysis` / `aggregate_join`
+- datasets: `['production_today', 'wip_today']`
+- row_count: `6`
+- columns: `['MODE', 'PRODUCTION', 'WIP', 'OPER_NAME']`
+- step_ids: `[]`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['production_today', 'wip_today']`
+  - actual: `['production_today', 'wip_today']`
+- PASS expected_columns
+  - expected: `['PRODUCTION', 'WIP']`
+  - actual: `['MODE', 'PRODUCTION', 'WIP', 'OPER_NAME']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `6`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_analysis_kind
+  - expected: `aggregate_join`
+  - actual: `aggregate_join`
+- FAIL expected_filter_fields
+  - expected: `['MODE', 'OPER_NAME']`
+  - actual: `[]`
+
+## FAIL today_da_wip_production_target_rate
+
+- question: `오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성율을 보여줘`
+- llm intent: `multi_source_analysis` / `production_wip_target_rate`
+- normalized intent: `multi_source_analysis` / `production_wip_target_rate`
+- datasets: `['production_today', 'wip_today', 'target']`
+- row_count: `16`
+- columns: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP', 'PRODUCTION', 'OUT_PLAN', 'ACHIEVEMENT_RATE']`
+- step_ids: `[]`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['production_today', 'target', 'wip_today']`
+  - actual: `['production_today', 'target', 'wip_today']`
+- PASS expected_columns
+  - expected: `['ACHIEVEMENT_RATE', 'OUT_PLAN', 'PRODUCTION', 'WIP']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP', 'PRODUCTION', 'OUT_PLAN', 'ACHIEVEMENT_RATE']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `16`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_analysis_kind
+  - expected: `production_wip_target_rate`
+  - actual: `production_wip_target_rate`
+- FAIL expected_filter_fields
+  - expected: `['OPER_NAME', 'DATE']`
+  - actual: `['OPER_NAME']`
+
+## FAIL da1_low_output_vs_target
+
+- question: `오늘 D/A1공정에서 목표값 대비해서 생산량이 저조한 제품을 알려줘`
+- llm intent: `multi_source_analysis` / `low_output_vs_target`
+- normalized intent: `multi_source_analysis` / `low_output_vs_target`
+- datasets: `['production_today', 'target']`
+- row_count: `16`
+- columns: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'TARGET_QTY', 'ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG']`
+- step_ids: `[]`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['production_today', 'target']`
+  - actual: `['production_today', 'target']`
+- PASS expected_columns
+  - expected: `['ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG', 'PRODUCTION', 'TARGET_QTY']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'TARGET_QTY', 'ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `16`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_analysis_kind
+  - expected: `low_output_vs_target`
+  - actual: `low_output_vs_target`
+- FAIL expected_filter_fields
+  - expected: `['OPER_NAME', 'DATE']`
+  - actual: `['OPER_NAME']`
+
+## FAIL input_plan_vs_da_low_output
+
+- question: `오늘 INPUT계획대비 D/A공정에서 생산량이 저조한 제품을 알려줘`
+- llm intent: `multi_source_analysis` / `low_output_vs_target`
+- normalized intent: `multi_source_analysis` / `low_output_vs_target`
+- datasets: `['production_today', 'target']`
+- row_count: `16`
+- columns: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'TARGET_QTY', 'ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG']`
+- step_ids: `[]`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['production_today', 'target']`
+  - actual: `['production_today', 'target']`
+- PASS expected_columns
+  - expected: `['ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG', 'PRODUCTION', 'TARGET_QTY']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'TARGET_QTY', 'ACHIEVEMENT_RATE', 'BALANCE', 'LOW_OUTPUT_FLAG']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `16`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_analysis_kind
+  - expected: `low_output_vs_target`
+  - actual: `low_output_vs_target`
+- FAIL expected_filter_fields
+  - expected: `['OPER_NAME', 'DATE']`
+  - actual: `['OPER_NAME']`
+
+## PASS waiting_lot_count_by_process
+
+- question: `현재 작업대기 Lot 수량을 공정별로 알려줘`
+- llm intent: `single_retrieval_analysis` / `lot_count_by_process`
+- normalized intent: `single_retrieval_analysis` / `lot_count_by_process`
+- datasets: `['lot_status']`
+- row_count: `20`
+- columns: `['OPER_SHORT_DESC', 'LOT_COUNT']`
+- step_ids: `[]`
+- normalizer_notes: `['retrieval_jobs were missing; built fallback jobs only from LLM-provided datasets, metadata, and request context.']`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- PASS expected_columns
+  - expected: `['LOT_COUNT', 'OPER_SHORT_DESC']`
+  - actual: `['OPER_SHORT_DESC', 'LOT_COUNT']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `20`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_analysis_kind
+  - expected: `lot_count_by_process`
+  - actual: `lot_count_by_process`
+- PASS expected_filter_fields
+  - expected: `['LOT_STAT_CD']`
+  - actual: `['LOT_STAT_CD']`
+
+## FAIL da_lot_wafer_die_summary
+
+- question: `현재 DA공정에서 재공 lot이 몇개인지, wafer가 몇개인지, die수량은 몇개인지 알려줘`
+- llm intent: `single_retrieval_analysis` / `lot_quantity_summary`
+- normalized intent: `single_retrieval_analysis` / `lot_quantity_summary`
+- datasets: `['lot_status']`
+- row_count: `1`
+- columns: `['LOT_COUNT', 'DIE_QTY', 'WAFER_QTY']`
+- step_ids: `['aggregate_quantities']`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['lot_status']`
+  - actual: `['lot_status']`
+- FAIL expected_columns
+  - expected: `['DIE_QTY', 'LOT_COUNT', 'WF_QTY']`
+  - actual: `['LOT_COUNT', 'DIE_QTY', 'WAFER_QTY']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_analysis_kind
+  - expected: `lot_quantity_summary`
+  - actual: `lot_quantity_summary`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+
+## FAIL da_wip_quantity_uses_wip_dataset
+
+- question: `현재 DA공정 재공 수량 알려줘`
+- llm intent: `single_retrieval_analysis` / `aggregate_wip_total`
+- normalized intent: `single_retrieval_analysis` / `aggregate_wip_total`
+- datasets: `['wip_today']`
+- row_count: `1`
+- columns: `['TOTAL_WIP']`
+- step_ids: `['aggregate_wip']`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- FAIL expected_columns
+  - expected: `['SCOPE', 'WIP']`
+  - actual: `['TOTAL_WIP']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_analysis_kind
+  - expected: `aggregate_wip_total`
+  - actual: `aggregate_wip_total`
+- PASS expected_filter_fields
+  - expected: `['OPER_NAME']`
+  - actual: `['OPER_NAME']`
+- PASS forbidden_filter_fields
+  - expected: `not present: ['LOT_STAT_CD', 'LOT_HOLD_STAT_CD']`
+  - actual: `[]`
+
+## PASS overall_wip_scope_reset_after_da
+
+- question: `전체 재공 수량 알려줘`
+- llm intent: `single_retrieval_analysis` / `aggregate_wip_total`
+- normalized intent: `single_retrieval_analysis` / `aggregate_wip_total`
+- datasets: `['wip_today']`
+- row_count: `1`
+- columns: `['SCOPE', 'WIP']`
+- step_ids: `[]`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['wip_today']`
+  - actual: `['wip_today']`
+- PASS expected_columns
+  - expected: `['SCOPE', 'WIP']`
+  - actual: `['SCOPE', 'WIP']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_analysis_kind
+  - expected: `aggregate_wip_total`
+  - actual: `aggregate_wip_total`
+- PASS forbidden_filter_fields
+  - expected: `not present: ['OPER_NAME', 'LOT_STAT_CD', 'LOT_HOLD_STAT_CD']`
+  - actual: `[]`
+
+## PASS today_total_production_wip_target
+
+- question: `오늘 생산량/재공/목표 값을 보여줘`
+- llm intent: `multi_source_analysis` / `overall_production_wip_target`
+- normalized intent: `multi_source_analysis` / `overall_production_wip_target`
+- datasets: `['production_today', 'wip_today', 'target']`
+- row_count: `1`
+- columns: `['SCOPE', 'PRODUCTION', 'WIP', 'OUT_PLAN']`
+- step_ids: `[]`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['production_today', 'target', 'wip_today']`
+  - actual: `['production_today', 'target', 'wip_today']`
+- PASS expected_columns
+  - expected: `['OUT_PLAN', 'PRODUCTION', 'WIP']`
+  - actual: `['SCOPE', 'PRODUCTION', 'WIP', 'OUT_PLAN']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `1`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_analysis_kind
+  - expected: `overall_production_wip_target`
+  - actual: `overall_production_wip_target`
+
+## FAIL yesterday_production_today_plan_gap
+
+- question: `어제 생산량과 오늘 생산계획의 차이수량을 제품별로 알려줘`
+- llm intent: `multi_source_analysis` / `date_split_production_plan_gap`
+- normalized intent: `multi_source_analysis` / `date_split_production_plan_gap`
+- datasets: `['production', 'target']`
+- row_count: `16`
+- columns: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'OUT_PLAN', 'BALANCE']`
+- step_ids: `[]`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['production', 'target']`
+  - actual: `['production', 'target']`
+- PASS expected_columns
+  - expected: `['BALANCE', 'OUT_PLAN', 'PRODUCTION']`
+  - actual: `['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'OUT_PLAN', 'BALANCE']`
+- PASS non_empty_result
+  - expected: `row_count > 0`
+  - actual: `16`
+- PASS pandas_executed
+  - expected: `True`
+  - actual: `True`
+- PASS expected_intent_type
+  - expected: `multi_source_analysis`
+  - actual: `multi_source_analysis`
+- PASS expected_analysis_kind
+  - expected: `date_split_production_plan_gap`
+  - actual: `date_split_production_plan_gap`
+- FAIL expected_filter_fields
+  - expected: `['DATE']`
+  - actual: `[]`
+
+## FAIL hbm_equipment_by_model
+
+- question: `오늘 HBM 장비 보유 현황을 EQP_MODEL별로 알려줘`
+- llm intent: `single_retrieval_analysis` / `equipment_by_model`
+- normalized intent: `single_retrieval_analysis` / `equipment_by_model`
+- datasets: `['equipment_status']`
+- row_count: `0`
+- columns: `[]`
+- step_ids: `['equipment_by_model_step']`
+- normalizer_notes: `[]`
+- normalizer_errors: `[]`
+- pandas_errors: `["Generated pandas code failed: 'TECH'"]`
+- PASS llm_intent_json_present
+  - expected: `True`
+  - actual: `True`
+- PASS expected_datasets
+  - expected: `['equipment_status']`
+  - actual: `['equipment_status']`
+- FAIL expected_columns
+  - expected: `['EQP_COUNT', 'EQP_MODEL', 'PRESS_CNT']`
+  - actual: `[]`
+- FAIL non_empty_result
+  - expected: `row_count > 0`
+  - actual: `0`
+- FAIL pandas_executed
+  - expected: `True`
+  - actual: `False`
+- PASS expected_intent_type
+  - expected: `single_retrieval_analysis`
+  - actual: `single_retrieval_analysis`
+- PASS expected_analysis_kind
+  - expected: `equipment_by_model`
+  - actual: `equipment_by_model`
+- FAIL expected_filter_fields
+  - expected: `['PKG_TYPE1']`
+  - actual: `['TECH']`

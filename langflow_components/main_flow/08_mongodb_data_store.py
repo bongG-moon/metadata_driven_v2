@@ -400,7 +400,7 @@ def _find_session_id(value: Any) -> str:
 
 
 class MongoDBDataStore(Component):
-    display_name = "05 MongoDB Data Store"
+    display_name = "08 MongoDB Data Store"
     description = "Stores large row lists in a MongoDB result collection and leaves compact data_ref pointers in the payload."
     icon = "Database"
     inputs = [

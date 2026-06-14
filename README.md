@@ -35,21 +35,20 @@ Langflow canvas에서는 LLM node를 중간에 명시적으로 둡니다.
 ```text
 Chat Input
 -> 00 Request State Loader
--> 01 Metadata Context Loader
--> 02 Intent Prompt Builder
+-> 01 MongoDB Data Loader
+-> 02 Metadata Context Loader
+-> 03 Intent Prompt Builder
 -> Gemini/LLM Intent JSON
--> 03 Intent Plan Normalizer
+-> 04 Intent Plan Normalizer
 -> data retrieval flow
--> 04 Retrieval Payload Adapter
--> 05 MongoDB Data Store
--> 06 MongoDB Data Loader
--> 07 Pandas Prompt Builder
+-> 05 Retrieval Payload Adapter
+-> 06 Pandas Prompt Builder
 -> Gemini/LLM Pandas Code JSON
--> 08 Pandas Code Executor
+-> 07 Pandas Code Executor
+-> 08 MongoDB Data Store
 -> 09 Answer Prompt Builder
 -> Gemini/LLM Final Answer
 -> 10 Answer Response Builder
--> 05 MongoDB Data Store
 -> 11 Answer Message Adapter
 -> Chat Output
 ```
@@ -93,8 +92,10 @@ python tools\validate_llm_in_loop.py
 ## MongoDB
 
 Main flow result rows use a separate full-name collection, `MONGODB_RESULT_COLLECTION` (default `agent_v2_result_store`).
-`05 MongoDB Data Store` writes large `runtime_sources`, `data.rows`, and `state.current_data.rows` there, while
-`06 MongoDB Data Loader` restores those refs before pandas execution or follow-up planning.
+`01 MongoDB Data Loader` restores compacted previous-turn refs in lightweight `preview` mode before follow-up planning.
+When a follow-up question must recalculate, filter, sort, regroup, or show detail rows from the previous result itself, `04 Intent Plan Normalizer` sets `requires_full_state_hydrate=true`; a second `01 MongoDB Data Loader` instance after node 04 should use `hydrate_mode=auto` so only those cases load full previous rows.
+`08 MongoDB Data Store` writes both source `runtime_sources` and pandas `analysis.rows` right after pandas execution, then leaves preview rows plus MongoDB `data_ref` pointers in the payload.
+Follow-up product context is carried in `state.current_data.product_key_values`, so product-key follow-ups do not need to load full previous rows.
 
 `.env`는 원본 workspace에서 복사되어 있습니다. MongoDB metadata는 prefix로 collection을 조합하지 않고 full collection name 3개를 그대로 입력합니다. 기본값은 `MONGODB_DATABASE=metadata_driven_agent_v2`, `MONGODB_DOMAIN_COLLECTION=agent_v2_domain_items`, `MONGODB_TABLE_CATALOG_COLLECTION=agent_v2_table_catalog_items`, `MONGODB_MAIN_FLOW_FILTER_COLLECTION=agent_v2_main_flow_filters`입니다.
 

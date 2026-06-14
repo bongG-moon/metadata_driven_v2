@@ -8,7 +8,7 @@
 
 ### 1. Intent normalizer production fallback
 
-파일: `langflow_components/main_flow/03_intent_plan_normalizer.py`
+파일: `langflow_components/main_flow/04_intent_plan_normalizer.py`
 
 보강 내용:
 
@@ -16,7 +16,7 @@
 - `production_wip_target_rate`, `rank_wip_then_join_production`, `aggregate_wip_total`, `low_output_vs_target`, `date_split_production_plan_gap`, `equipment_for_previous_products` 같은 도메인/지표별 dataset, alias, step plan은 fallback 코드가 복구하지 않는다. 이런 구조는 metadata와 LLM plan에서 나와야 한다.
 - `rank_top_n`, `rank_bottom_n`, `detail_rows`처럼 어느 도메인에서도 공통으로 쓸 수 있는 최소 step만 fallback으로 생성한다.
 - LLM이 준 `target_column`, `top_n`, `threshold`, `scope_label`, `state_product_keys` 같은 실행 파라미터를 normalized plan에 보존한다.
-- follow-up 장비 질문에서 이전 `state.current_data.rows`의 product grain을 `state_product_keys`로 복구한다.
+- follow-up 장비 질문에서 이전 `state.current_data.product_key_values`를 우선 사용하고, 필요 시 preview rows의 product grain을 `state_product_keys`로 복구한다.
 - fallback이 동작하면 `normalizer_notes`와 payload warning에 근거를 남긴다.
 
 효과:

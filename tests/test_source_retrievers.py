@@ -128,7 +128,7 @@ def test_retrieval_payload_adapter_builds_compact_main_payload():
         }
     }
 
-    adapter = _load_main_component("04_retrieval_payload_adapter.py")
+    adapter = _load_main_component("05_retrieval_payload_adapter.py")
     payload = adapter.adapt_retrieval_payload(main_payload, retrieval_payload)
 
     assert payload["runtime_sources"]["hold_history"][0]["LOT_ID"] == "T1234567GEN1"

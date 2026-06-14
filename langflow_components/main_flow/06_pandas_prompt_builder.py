@@ -75,7 +75,11 @@ def _analysis_instruction(plan: dict[str, Any]) -> str:
             "+ ['WIP', 'PRODUCTION']. Do not output PRODUCTION_sum or rank."
         )
     if kind == "detail_rows":
-        return "Return the requested detail columns from step_plan[0].source_alias."
+        return (
+            "Return detail source rows without aggregation or groupby. "
+            "If step_plan[0].source_aliases exists, return rows from those aliases and add SOURCE_ALIAS so each row's source is clear; "
+            "otherwise return the requested detail columns from step_plan[0].source_alias."
+        )
     if kind == "rank_top_n":
         return f"Aggregate the metric in step_plan[0].metric by product_grain {product_keys}, rank descending, keep top_n."
     if kind == "equipment_for_previous_products":
@@ -149,7 +153,11 @@ def _state_summary(state: dict[str, Any]) -> dict[str, Any]:
         "has_state": bool(state),
         "context": state.get("context", {}),
         "current_data_columns": current_data.get("columns", []),
+        "current_data_row_count": current_data.get("row_count", 0),
         "current_data_preview_rows": rows[:3],
+        "current_data_product_key_columns": current_data.get("product_key_columns", []),
+        "current_data_product_key_values": _list_preview(current_data.get("product_key_values"), 20),
+        "current_data_product_key_count": current_data.get("product_key_count", 0),
         "followup_source_results": state.get("followup_source_results", []),
     }
 
@@ -173,8 +181,12 @@ def _rows_from_current_data(current_data: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
+def _list_preview(value: Any, limit: int) -> list[Any]:
+    return deepcopy(value[:limit]) if isinstance(value, list) else []
+
+
 class PandasPromptBuilder(Component):
-    display_name = "07 Pandas Prompt Builder"
+    display_name = "06 Pandas Prompt Builder"
     description = "Builds the prompt that should be sent to the Langflow Gemini/LLM node for pandas code generation."
     inputs = [DataInput(name="payload", display_name="Payload", required=True)]
     outputs = [

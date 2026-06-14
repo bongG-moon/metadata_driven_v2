@@ -15,6 +15,7 @@ def build_request_payload(question: str, session_id: str = "demo-session", state
         "status": "ok",
         "request": {"session_id": session_id, "question": question, "timezone": "Asia/Seoul"},
         "state": deepcopy(state or {"chat_history": [], "context": {}, "current_data": {}}),
+        "info": [],
         "warnings": [],
         "errors": [],
     }

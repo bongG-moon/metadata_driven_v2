@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 *.pyc
 validation_runs/*/results.json
+streamlit_web*.log

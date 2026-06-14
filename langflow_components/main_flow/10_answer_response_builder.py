@@ -31,12 +31,17 @@ def build_answer_response_payload(payload_value: Any, llm_response_value: Any) -
 
 def _build_data(payload: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:
     session_id = ((payload.get("request") or {}).get("session_id") or "demo-session") if isinstance(payload.get("request"), dict) else "demo-session"
-    return {
+    data_ref = analysis.get("data_ref") if isinstance(analysis.get("data_ref"), dict) else f"memory://{session_id}/current_data"
+    data = {
         "columns": list(analysis.get("columns", [])),
         "rows": deepcopy(analysis.get("rows", [])),
         "row_count": int(analysis.get("row_count", 0) or 0),
-        "data_ref": f"memory://{session_id}/current_data",
+        "data_ref": deepcopy(data_ref),
     }
+    for key in ("data_is_reference", "data_is_preview", "data_ref_loaded", "data_ref_load_mode"):
+        if key in analysis:
+            data[key] = deepcopy(analysis[key])
+    return data
 
 
 def _build_applied_scope(payload: dict[str, Any]) -> dict[str, Any]:
@@ -89,10 +94,18 @@ def _next_state(
         "last_datasets": applied_scope.get("datasets", []),
         "last_source_aliases": applied_scope.get("source_aliases", []),
     }
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    product_key_columns = _product_key_columns(payload, data, analysis)
+    product_key_values = _analysis_product_key_values(analysis, product_key_columns)
+    if not product_key_values:
+        product_key_values = _product_key_values(data.get("rows", []), product_key_columns)
     state["current_data"] = {
         **data,
         "source_dataset_keys": applied_scope.get("datasets", []),
         "source_aliases": applied_scope.get("source_aliases", []),
+        "product_key_columns": product_key_columns,
+        "product_key_values": product_key_values,
+        "product_key_count": len(product_key_values),
     }
     state["followup_source_results"] = [
         {
@@ -105,6 +118,50 @@ def _next_state(
         if isinstance(result, dict)
     ]
     return state
+
+
+def _product_key_columns(payload: dict[str, Any], data: dict[str, Any], analysis: dict[str, Any] | None = None) -> list[str]:
+    analysis = analysis if isinstance(analysis, dict) else {}
+    analysis_columns = analysis.get("product_key_columns")
+    if isinstance(analysis_columns, list) and analysis_columns:
+        return [str(column) for column in analysis_columns if str(column or "").strip()]
+    plan = payload.get("intent_plan") if isinstance(payload.get("intent_plan"), dict) else {}
+    plan_grain = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
+    columns = data.get("columns") if isinstance(data.get("columns"), list) else []
+    if plan_grain:
+        return [str(column) for column in plan_grain if str(column) in columns]
+    default_keys = ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "TSV_DIE_TYP"]
+    return [column for column in default_keys if column in columns]
+
+
+def _analysis_product_key_values(analysis: dict[str, Any], product_key_columns: list[str]) -> list[dict[str, Any]]:
+    values = analysis.get("product_key_values") if isinstance(analysis.get("product_key_values"), list) else []
+    if not values:
+        return []
+    result: list[dict[str, Any]] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        if product_key_columns:
+            product = {key: item.get(key) for key in product_key_columns if item.get(key) not in {None, ""}}
+        else:
+            product = {str(key): value for key, value in item.items() if value not in {None, ""}}
+        if product and product not in result:
+            result.append(product)
+    return result
+
+
+def _product_key_values(rows: Any, product_key_columns: list[str]) -> list[dict[str, Any]]:
+    if not product_key_columns or not isinstance(rows, list):
+        return []
+    values: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        product = {key: row.get(key) for key in product_key_columns if row.get(key) not in {None, ""}}
+        if product and product not in values:
+            values.append(product)
+    return values
 
 
 def _answer_text_from_llm(value: Any) -> str:

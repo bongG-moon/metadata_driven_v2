@@ -10,6 +10,7 @@
 | Domain metadata authoring flow | `langflow_components/domain_authoring_flow/CONNECTION_GUIDE.md` |
 | Table catalog authoring flow | `langflow_components/table_catalog_authoring_flow/CONNECTION_GUIDE.md` |
 | Main flow filter authoring flow | `langflow_components/main_flow_filters_authoring_flow/CONNECTION_GUIDE.md` |
+| Web implementation guide | `docs/WEB_IMPLEMENTATION_GUIDE.md` |
 
 공통 원칙은 유지합니다.
 

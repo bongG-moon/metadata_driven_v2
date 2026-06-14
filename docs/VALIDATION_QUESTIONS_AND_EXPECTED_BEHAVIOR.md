@@ -68,7 +68,7 @@
 
 기대 동작:
 
-- 이전 질문의 `state.current_data.rows`에서 product grain을 읽는다.
+- 이전 질문의 `state.current_data.product_key_values`를 우선 사용하고, 없을 때 preview rows에서 product grain을 읽는다.
 - 사용 dataset: `equipment_status`
 - `state_product_keys`가 비어 있으면 실패 또는 확인 요청을 해야 한다.
 - 최종 컬럼: `EQPID`, `EQP_MODEL`, `PRESS_CNT`, product grain, `LOT_ID`, `RECIPE_ID`

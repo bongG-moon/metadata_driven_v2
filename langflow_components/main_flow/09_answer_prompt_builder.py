@@ -31,6 +31,7 @@ def build_answer_prompt_payload(payload_value: Any) -> dict[str, Any]:
         },
         "source_results": _compact_source_results(source_results),
         "metadata_context": metadata_context,
+        "info": payload.get("info", []),
         "warnings": payload.get("warnings", []),
         "errors": payload.get("errors", []) + analysis.get("errors", []),
     }

@@ -1,90 +1,150 @@
 # Main Flow Connection Guide
 
-이 문서는 실제 질의/분석 agent를 Langflow canvas에서 연결하는 기준입니다.
-큰 row payload는 MongoDB result store에 저장하고, flow 안에서는 `data_ref`를 들고 다닌 뒤 pandas 실행 전 다시 hydrate합니다.
+이 문서는 현재 `langflow_components/main_flow` 파일 기준 Langflow canvas 연결 가이드입니다.
 
-## Nodes
+핵심 흐름은 다음과 같습니다.
 
-| # | Node | Component file | Role |
-| --- | --- | --- | --- |
-| 00 | `00 Request State Loader` | `00_request_state_loader.py` | 질문, session id, 이전 state를 compact payload로 생성 |
-| 01 | `01 Metadata Context Loader` | `01_metadata_context_loader.py` | MongoDB에서 domain/table/filter metadata 로드 |
-| 02 | `02 Intent Prompt Builder` | `02_intent_prompt_builder.py` | 의도 분석 prompt 생성 |
-| LLM-A | Gemini/LLM intent node | Langflow 기본 LLM node | intent JSON 생성 |
-| 03 | `03 Intent Plan Normalizer` | `03_intent_plan_normalizer.py` | intent JSON을 retrieval jobs와 route로 정규화 |
-| 04 | `04 Retrieval Payload Adapter` | `04_retrieval_payload_adapter.py` | 별도 retrieval flow 결과를 main payload에 병합 |
-| 05 | `05 MongoDB Data Store` | `05_mongodb_data_store.py` | `runtime_sources`, `data.rows`, `state.current_data.rows` 같은 큰 row list를 MongoDB에 저장하고 ref로 축약 |
-| 06 | `06 MongoDB Data Loader` | `06_mongodb_data_loader.py` | MongoDB `data_ref`를 pandas 실행 또는 후속 질문 전에 rows로 복원 |
-| 07 | `07 Pandas Prompt Builder` | `07_pandas_prompt_builder.py` | pandas code JSON 생성용 prompt 생성 |
-| LLM-B | Gemini/LLM pandas node | Langflow 기본 LLM node | pandas code JSON 생성 |
-| 08 | `08 Pandas Code Executor` | `08_pandas_code_executor.py` | safety check 후 pandas code 실행 |
-| 09 | `09 Answer Prompt Builder` | `09_answer_prompt_builder.py` | 최종 답변 prompt 생성 |
-| LLM-C | Gemini/LLM answer node | Langflow 기본 LLM node | 최종 한국어 답변 생성 |
-| 10 | `10 Answer Response Builder` | `10_answer_response_builder.py` | 답변, data, applied_scope, next state 생성 |
-| 11 | `11 Answer Message Adapter` | `11_answer_message_adapter.py` | Playground에 답변/표/의도/pandas 코드를 Markdown으로 표시 |
+- 앞단 `01 MongoDB Data Loader`는 이전 turn의 `state.current_data.data_ref`를 기본 `preview` 모드로 가볍게 복원합니다.
+- 후속 질문이 이전 결과 rows 전체를 다시 분석해야 하면 `04 Intent Plan Normalizer`가 `intent_plan.requires_full_state_hydrate=true`와 `state_hydrate_mode=full`을 설정합니다.
+- `04` 뒤에 같은 `01 MongoDB Data Loader` 컴포넌트를 두 번째 인스턴스로 배치하고, 이 인스턴스만 `hydrate_mode=auto`로 둡니다. 평소에는 preview로 통과하고, 위 플래그가 있을 때만 full hydrate합니다.
+- `08 MongoDB Data Store`는 `07 Pandas Code Executor` 직후에 연결합니다. 여기서 원본 `runtime_sources`와 pandas 결과 `analysis.rows`를 모두 MongoDB에 저장하고 payload에는 preview rows와 `data_ref`만 남깁니다.
+- `10 Answer Response Builder`는 `analysis.data_ref`를 최종 `data.data_ref`와 `state.current_data.data_ref`로 이어받습니다.
 
-## Required Connections
+## Node Inventory
 
-| # | From node | From output | To node | To input |
+| # | Node | Component file | Required inputs | Outputs |
 | --- | --- | --- | --- | --- |
-| 1 | `Chat Input` | `message` or `text` | `00 Request State Loader` | `question` |
-| 2 | Text input | fixed session id | `00 Request State Loader` | `session_id` |
-| 3 | Previous state source | Data | `00 Request State Loader` | `state` |
-| 4 | `00 Request State Loader` | `payload` | `06 MongoDB Data Loader` | `payload` |
-| 5 | `06 MongoDB Data Loader` | `payload_out` | `01 Metadata Context Loader` | `payload` |
-| 6 | Text input | MongoDB URI | `01 Metadata Context Loader`, `05 MongoDB Data Store`, `06 MongoDB Data Loader` | `mongo_uri` |
-| 7 | Text input | DB name | `01 Metadata Context Loader`, `05 MongoDB Data Store`, `06 MongoDB Data Loader` | `mongo_database` |
-| 8 | Text input 3개 | full metadata collection names | `01 Metadata Context Loader` | `domain_collection_name`, `table_catalog_collection_name`, `main_flow_filter_collection_name` |
-| 9 | Text input | result collection full name, e.g. `agent_v2_result_store` | `05 MongoDB Data Store`, `06 MongoDB Data Loader` | `result_collection_name` |
-| 10 | `01 Metadata Context Loader` | `payload_out` | `02 Intent Prompt Builder` | `payload` |
-| 11 | `02 Intent Prompt Builder` | `intent_prompt` | Gemini/LLM intent node | prompt/message input |
-| 12 | `01 Metadata Context Loader` | `payload_out` | `03 Intent Plan Normalizer` | `payload` |
-| 13 | Gemini/LLM intent node | text/message output | `03 Intent Plan Normalizer` | `llm_response` |
+| 00 | `00 Request State Loader` | `00_request_state_loader.py` | `question`, `session_id`, optional `state` | `payload` |
+| 01 | `01 MongoDB Data Loader` | `01_mongodb_data_loader.py` | `payload` | `payload_out` |
+| 02 | `02 Metadata Context Loader` | `02_metadata_context_loader.py` | `payload` | `payload_out` |
+| 03 | `03 Intent Prompt Builder` | `03_intent_prompt_builder.py` | `payload` | `intent_prompt`, `prompt_payload` |
+| LLM-A | Intent LLM | Langflow LLM node | prompt/message | text/message |
+| 04 | `04 Intent Plan Normalizer` | `04_intent_plan_normalizer.py` | `payload`, `llm_response` | `payload_out` |
+| 04B | `01 MongoDB Data Loader` second instance | `01_mongodb_data_loader.py` | `payload` | `payload_out` |
+| Retrieval | Data Retrieval Flow | `../data_retrieval_flow` | `payload` | `retrieval_payload` |
+| 05 | `05 Retrieval Payload Adapter` | `05_retrieval_payload_adapter.py` | `main_payload`, `retrieval_payload` | `payload` |
+| 06 | `06 Pandas Prompt Builder` | `06_pandas_prompt_builder.py` | `payload` | `pandas_prompt`, `prompt_payload` |
+| LLM-B | Pandas Code LLM | Langflow LLM node | prompt/message | text/message |
+| 07 | `07 Pandas Code Executor` | `07_pandas_code_executor.py` | `payload`, `llm_response` | `payload_out` |
+| 08 | `08 MongoDB Data Store` | `08_mongodb_data_store.py` | `payload` | `payload_out` |
+| 09 | `09 Answer Prompt Builder` | `09_answer_prompt_builder.py` | `payload` | `answer_prompt`, `prompt_payload` |
+| LLM-C | Answer LLM | Langflow LLM node | prompt/message | text/message |
+| 10 | `10 Answer Response Builder` | `10_answer_response_builder.py` | `payload`, `llm_response` | `payload_out` |
+| 11 | `11 Answer Message Adapter` | `11_answer_message_adapter.py` | `payload` | `message` |
 
-If the previous state never contains MongoDB refs, connection #4 can be skipped. In production, keep it so follow-up questions can restore compacted `state.current_data`.
+## Required Main Spine
 
-## Retrieval Bridge
+| # | From node | From output | To node | To input | Note |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `Chat Input` | `message` or `text` | `00 Request State Loader` | `question` | 사용자 질문 |
+| 2 | Text/Input field | value | `00 Request State Loader` | `session_id` | 사용자/session key |
+| 3 | Previous state source | Data | `00 Request State Loader` | `state` | 후속 질문이면 연결 |
+| 4 | `00 Request State Loader` | `payload` | `01 MongoDB Data Loader` | `payload` | 이전 `data_ref` preview/summary 복원 |
+| 5 | `01 MongoDB Data Loader` | `payload_out` | `02 Metadata Context Loader` | `payload` | metadata 추가 |
+| 6 | `02 Metadata Context Loader` | `payload_out` | `03 Intent Prompt Builder` | `payload` | intent prompt 생성 |
+| 7 | `03 Intent Prompt Builder` | `intent_prompt` | Intent LLM | prompt/message input | JSON intent 생성 |
+| 8 | `02 Metadata Context Loader` | `payload_out` | `04 Intent Plan Normalizer` | `payload` | 원 payload |
+| 9 | Intent LLM | text/message output | `04 Intent Plan Normalizer` | `llm_response` | intent JSON 응답 |
+| 10 | `04 Intent Plan Normalizer` | `payload_out` | `01 MongoDB Data Loader` second instance | `payload` | `hydrate_mode=auto` |
+| 11 | second `01 MongoDB Data Loader` | `payload_out` | Retrieval flow start node(s) | `payload` | full hydrate 반영 payload |
+| 12 | second `01 MongoDB Data Loader` | `payload_out` | `05 Retrieval Payload Adapter` | `main_payload` | main payload branch |
+| 13 | Retrieval flow end node | `retrieval_payload` | `05 Retrieval Payload Adapter` | `retrieval_payload` | source rows 병합 |
+| 14 | `05 Retrieval Payload Adapter` | `payload` | `06 Pandas Prompt Builder` | `payload` | source rows 포함 payload |
+| 15 | `06 Pandas Prompt Builder` | `pandas_prompt` | Pandas Code LLM | prompt/message input | JSON-only pandas code |
+| 16 | `05 Retrieval Payload Adapter` | `payload` | `07 Pandas Code Executor` | `payload` | LLM code와 합칠 payload |
+| 17 | Pandas Code LLM | text/message output | `07 Pandas Code Executor` | `llm_response` | pandas code JSON |
+| 18 | `07 Pandas Code Executor` | `payload_out` | `08 MongoDB Data Store` | `payload` | source/result rows 저장 및 compact |
+| 19 | `08 MongoDB Data Store` | `payload_out` | `09 Answer Prompt Builder` | `payload` | compacted result preview로 답변 prompt 생성 |
+| 20 | `09 Answer Prompt Builder` | `answer_prompt` | Answer LLM | prompt/message input | 한국어 답변 생성 |
+| 21 | `08 MongoDB Data Store` | `payload_out` | `10 Answer Response Builder` | `payload` | 저장된 `analysis.data_ref` 포함 payload |
+| 22 | Answer LLM | text/message output | `10 Answer Response Builder` | `llm_response` | 최종 답변 |
+| 23 | `10 Answer Response Builder` | `payload_out` | `11 Answer Message Adapter` | `payload` | Playground Markdown 생성 |
+| 24 | `11 Answer Message Adapter` | `message` | `Chat Output` | `message` | 사용자 표시 |
+| 25 | `10 Answer Response Builder` | `payload_out.state` | State Store/Web backend | stored state | 다음 turn의 `00.state`로 재사용 |
 
-Dummy 또는 source별 retrieval flow 중 하나를 선택합니다. 자세한 retrieval flow 연결은 `../data_retrieval_flow/CONNECTION_GUIDE.md`를 따릅니다.
+## MongoDB Config Inputs
 
-| # | From node | From output | To node | To input |
-| --- | --- | --- | --- | --- |
-| 14 | `03 Intent Plan Normalizer` | `payload_out` | retrieval flow start node(s) | `payload` |
-| 15 | `03 Intent Plan Normalizer` | `payload_out` | `04 Retrieval Payload Adapter` | `main_payload` |
-| 16 | retrieval flow end node | `retrieval_payload` | `04 Retrieval Payload Adapter` | `retrieval_payload` |
-| 17 | `04 Retrieval Payload Adapter` | `payload` | `05 MongoDB Data Store` | `payload` |
-| 18 | `05 MongoDB Data Store` | `payload_out` | `06 MongoDB Data Loader` | `payload` |
+| Target node | Input | Recommended value |
+| --- | --- | --- |
+| first `01 MongoDB Data Loader` | `mongo_uri` | 비워두면 `MONGODB_URI` |
+| first `01 MongoDB Data Loader` | `mongo_database` | 비워두면 `MONGODB_DATABASE` |
+| first `01 MongoDB Data Loader` | `result_collection_name` | `agent_v2_result_store` 또는 `MONGODB_RESULT_COLLECTION` |
+| first `01 MongoDB Data Loader` | `hydrate_mode` | `preview` |
+| first `01 MongoDB Data Loader` | `preview_row_limit` | 기본 `5` |
+| second `01 MongoDB Data Loader` | `hydrate_mode` | `auto` |
+| second `01 MongoDB Data Loader` | `preview_row_limit` | 기본 `5` |
+| `02 Metadata Context Loader` | `mongo_uri` | MongoDB metadata 조회 URI |
+| `02 Metadata Context Loader` | `mongo_database` | `metadata_driven_agent_v2` 또는 운영 DB |
+| `02 Metadata Context Loader` | `domain_collection_name` | `agent_v2_domain_items` |
+| `02 Metadata Context Loader` | `table_catalog_collection_name` | `agent_v2_table_catalog_items` |
+| `02 Metadata Context Loader` | `main_flow_filter_collection_name` | `agent_v2_main_flow_filters` |
+| `08 MongoDB Data Store` | `mongo_uri` | 비워두면 `MONGODB_URI` |
+| `08 MongoDB Data Store` | `mongo_database` | 비워두면 `MONGODB_DATABASE` |
+| `08 MongoDB Data Store` | `result_collection_name` | `agent_v2_result_store` 또는 `MONGODB_RESULT_COLLECTION` |
+| `08 MongoDB Data Store` | `enabled` | 기본 `true` |
+| `08 MongoDB Data Store` | `preview_row_limit` | 기본 `5` |
+| `08 MongoDB Data Store` | `min_rows` | 기본 `1` |
 
-At #17, `runtime_sources` is compacted to preview rows plus `runtime_source_refs`. At #18, those refs are restored so pandas receives full DataFrames.
+Metadata collection과 result store collection은 prefix 조합이 아니라 full collection name을 직접 입력합니다.
 
-## Pandas And Answer
+## Minimal Canvas Sequence
 
-| # | From node | From output | To node | To input |
-| --- | --- | --- | --- | --- |
-| 19 | `06 MongoDB Data Loader` | `payload_out` | `07 Pandas Prompt Builder` | `payload` |
-| 20 | `07 Pandas Prompt Builder` | `pandas_prompt` | Gemini/LLM pandas node | prompt/message input |
-| 21 | `06 MongoDB Data Loader` | `payload_out` | `08 Pandas Code Executor` | `payload` |
-| 22 | Gemini/LLM pandas node | text/message output | `08 Pandas Code Executor` | `llm_response` |
-| 23 | `08 Pandas Code Executor` | `payload_out` | `09 Answer Prompt Builder` | `payload` |
-| 24 | `09 Answer Prompt Builder` | `answer_prompt` | Gemini/LLM answer node | prompt/message input |
-| 25 | `08 Pandas Code Executor` | `payload_out` | `10 Answer Response Builder` | `payload` |
-| 26 | Gemini/LLM answer node | text/message output | `10 Answer Response Builder` | `llm_response` |
-| 27 | `10 Answer Response Builder` | `payload_out` | `05 MongoDB Data Store` | `payload` |
-| 28 | `05 MongoDB Data Store` | `payload_out` | `11 Answer Message Adapter` | `payload` |
-| 29 | `11 Answer Message Adapter` | `message` | `Chat Output` | `message` |
-| 30 | `05 MongoDB Data Store` after #27 | `payload_out.state` | State Store | stored state |
+```text
+Chat Input
+-> 00 Request State Loader
+-> 01 MongoDB Data Loader (preview)
+-> 02 Metadata Context Loader
+-> 03 Intent Prompt Builder
+-> Intent LLM
+-> 04 Intent Plan Normalizer
+-> 01 MongoDB Data Loader (second instance, hydrate_mode=auto)
+-> Data Retrieval Flow
+-> 05 Retrieval Payload Adapter
+-> 06 Pandas Prompt Builder
+-> Pandas Code LLM
+-> 07 Pandas Code Executor
+-> 08 MongoDB Data Store
+-> 09 Answer Prompt Builder
+-> Answer LLM
+-> 10 Answer Response Builder
+-> 11 Answer Message Adapter
+-> Chat Output
+```
 
-## MongoDB Result Store Inputs
+병렬 payload branch는 다음을 지켜야 합니다.
 
-- `mongo_uri`: MongoDB connection URI. 빈 값이면 `MONGODB_URI` 환경변수를 사용합니다.
-- `mongo_database`: database 이름. 빈 값이면 `MONGODB_DATABASE`를 사용합니다.
-- `result_collection_name`: result store full collection name. 기본값은 `agent_v2_result_store`이고, 빈 값이면 `MONGODB_RESULT_COLLECTION`을 사용합니다.
-- `preview_row_limit`: payload에 남길 preview row 수입니다.
-- `min_rows`: 이 row 수 이상이면 MongoDB에 저장합니다.
+```text
+02 Metadata Context Loader.payload_out -> 04 Intent Plan Normalizer.payload
+04 Intent Plan Normalizer.payload_out -> second 01 MongoDB Data Loader.payload
+second 01 MongoDB Data Loader.payload_out -> 05 Retrieval Payload Adapter.main_payload
+05 Retrieval Payload Adapter.payload -> 07 Pandas Code Executor.payload
+08 MongoDB Data Store.payload_out -> 10 Answer Response Builder.payload
+10 Answer Response Builder.payload_out.state -> next turn state store
+```
 
-## Notes
+## Stored Data Contract
 
-- metadata collection은 prefix 조합이 아니라 `domain_collection_name`, `table_catalog_collection_name`, `main_flow_filter_collection_name`에 full collection name을 직접 입력합니다.
-- result row collection도 prefix가 아니라 `result_collection_name` full name을 직접 입력합니다.
-- `03 Intent Plan Normalizer`는 LLM이 만든 `retrieval_jobs`를 그대로 통과시키지 않고, MongoDB metadata를 기준으로 필수 params, 날짜 형식, 공정/제품/상태 filter, 후속 질문의 이전 제품 key를 보강합니다. 계산식이나 공정별 특수 로직은 코드 fallback에 넣지 말고 domain/table/filter metadata로 보강해야 합니다.
-- `11 Answer Message Adapter`는 최종 payload를 새로 저장하지 않고, 앞 단계에서 이미 compact된 payload를 읽어 Playground용 Markdown만 만듭니다.
+`08 MongoDB Data Store`는 pandas 직후 payload에서 다음 row list를 저장합니다.
+
+- `runtime_sources.<source_alias>`: 분석에 사용된 원본 retrieval rows
+- `analysis.rows`: pandas executor가 만든 최종 결과 rows
+
+저장 뒤 payload에는 preview rows, `row_count`, `columns`, `data_ref`가 남습니다. `10 Answer Response Builder`는 `analysis.data_ref`를 `data.data_ref`와 `state.current_data.data_ref`로 이어받으므로, 다음 turn state에는 전체 rows가 아니라 compact reference와 summary만 저장됩니다.
+
+## Full Hydrate Policy
+
+기본 후속 질문은 `state.current_data.product_key_values`, `row_count`, `columns`, preview rows만 사용합니다.
+
+다음 유형은 이전 결과 rows 전체가 필요하므로 `04 Intent Plan Normalizer`가 full hydrate를 요청합니다.
+
+- 이전 결과 전체/상세/원본 rows를 다시 보여 달라는 질문
+- 이전 결과를 다시 정렬, 필터, top/bottom, groupby, 합계/평균 등으로 재분석하는 질문
+- LLM intent JSON이 `requires_full_state_hydrate=true` 또는 `state_hydrate_mode=full`을 명시한 경우
+
+반대로 “이 제품/해당 제품의 장비를 보여줘”처럼 이전 결과의 제품 key만 새 retrieval에 쓰는 질문은 summary hydrate로 충분합니다.
+
+## Do Not Connect This Way
+
+- 같은 turn에서 `05 Retrieval Payload Adapter -> 08 MongoDB Data Store -> 01 MongoDB Data Loader -> 06 Pandas Prompt Builder`로 source rows를 저장했다가 재로드하지 않습니다. 같은 turn 분석은 `runtime_sources`를 직접 사용합니다.
+- `09 Answer Prompt Builder.prompt_payload`를 normalizer/executor의 `payload`로 연결하지 않습니다. 이 output은 prompt 디버깅용 Data입니다.
+- `11 Answer Message Adapter.message`를 후속 state로 저장하지 않습니다. 후속 state는 `10 Answer Response Builder.payload_out.state`를 사용합니다.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
@@ -67,6 +68,11 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
                     "datasets": ["dataset_key"],
                     "params_by_dataset": {"dataset_key": {"DATE": "YYYYMMDD or YYYY-MM-DD", "LOT_ID": "optional"}},
                     "filters": [{"field": "metadata filter field", "op": "eq|in|not_empty|tuple_in", "value": "optional", "values": []}],
+                    "product_grain": ["columns used for product/process grouping, or [] for total/detail rows"],
+                    "metric": "standard metric column for ranking/aggregation, such as WIP or PRODUCTION",
+                    "top_n": "positive integer for top/rank questions",
+                    "rank_order": "desc | asc",
+                    "analysis_output_columns": ["standard result columns expected after pandas, optional"],
                     "retrieval_jobs": [
                         {
                             "dataset_key": "dataset key from metadata",
@@ -77,8 +83,21 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
                             "required_columns": [],
                         }
                     ],
-                    "step_plan": [{"step_id": "short id", "operation": "analysis operation", "source_alias": "source alias"}],
+                    "step_plan": [
+                        {
+                            "step_id": "short id",
+                            "operation": "analysis operation",
+                            "source_alias": "source alias",
+                            "metric": "optional metric column",
+                            "top_n": "optional positive integer",
+                            "rank_order": "optional desc|asc",
+                            "group_by": ["optional grouping columns"],
+                            "output_columns": ["optional standard result columns"],
+                        }
+                    ],
                     "depends_on_state": False,
+                    "requires_full_state_hydrate": False,
+                    "state_hydrate_mode": "summary | full",
                     "reasoning_steps": ["short Korean or English reasoning step"],
                 },
                 ensure_ascii=False,
@@ -87,15 +106,23 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "",
             "Rules:",
             "- Use intent_type=detail_lookup for detail row requests such as a specific LOT hold history or hold lot list.",
+            "- If the user asks for 상세 데이터, 세부 데이터, 원본 row, 전체 row, or says not to aggregate/group, preserve source rows with analysis_kind=detail_rows instead of forcing group_by.",
             "- Use intent_type=single_retrieval_analysis for one-dataset aggregation/ranking questions.",
             "- Use intent_type=multi_source_analysis for questions that need multiple datasets.",
             "- Use intent_type=multi_step_analysis when one step creates keys that the next step must reuse.",
             "- If analysis_kind=rank_wip_then_join_production, intent_type must be multi_step_analysis.",
+            "- Always return retrieval_jobs for every dataset in datasets unless intent_type=finish. Do not return only datasets/params/filters.",
+            "- Always return step_plan for analysis requests unless intent_type=finish. The step_plan must say which operation uses which source_alias.",
             "- Use intent_type=followup_transform when the question says 이 제품/그 제품/해당 제품 and needs previous state.",
+            "- For follow-up questions that recalculate, filter, sort, regroup, or show detail rows from the previous result itself, set requires_full_state_hydrate=true and state_hydrate_mode=full.",
+            "- For follow-up questions that only need previous product keys for a new retrieval, keep state_hydrate_mode=summary.",
             "- For 오늘/현재, prefer datasets whose metadata date_scope is current_day unless the question asks for history.",
             "- For 목표/계획, use dataset families and quantity/metric terms from metadata, and preserve each dataset's date_format.",
             "- For status or detail requests, use status_terms and table_catalog metadata instead of hardcoded status codes.",
+            "- For top/bottom/rank questions, do not return a nested rank object. Put ranking values in top-level metric/top_n/rank_order and repeat them in the rank step_plan item.",
+            "- For 가장 많은/most/highest/top questions without an explicit count, use top_n=1 and rank_order=desc.",
             "- For top/bottom/rank questions followed by a dependent lookup, express rank first and dependent retrieval/analysis steps second.",
+            "- Do not use loose top-level group_by/output_columns as substitutes for step_plan. Use product_grain and analysis_output_columns, and include group_by/output_columns inside the relevant step when needed.",
             "- Use aggregate_wip_total only for one-dataset total/sum questions that metadata identifies as WIP/current quantity work.",
             "- Use aggregate_join only for a simple multi-source join when no matching analysis_recipes item gives a more specific plan.",
             "- If an analysis_recipes item matches the question, use its required_quantity_terms, required_dataset_families, metric_terms, grain_policy, source_aliases_by_family, defaults, and output_columns as planning evidence.",
@@ -141,7 +168,11 @@ def _state_summary(state: dict[str, Any]) -> dict[str, Any]:
         "has_state": bool(state),
         "context": state.get("context", {}),
         "current_data_columns": current_data.get("columns", []),
+        "current_data_row_count": current_data.get("row_count", 0),
         "current_data_preview_rows": rows[:3],
+        "current_data_product_key_columns": current_data.get("product_key_columns", []),
+        "current_data_product_key_values": _list_preview(current_data.get("product_key_values"), 20),
+        "current_data_product_key_count": current_data.get("product_key_count", 0),
         "followup_source_results": state.get("followup_source_results", []),
     }
 
@@ -158,6 +189,10 @@ def _rows_from_current_data(current_data: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
+def _list_preview(value: Any, limit: int) -> list[Any]:
+    return deepcopy(value[:limit]) if isinstance(value, list) else []
+
+
 def _payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
@@ -166,7 +201,7 @@ def _payload(value: Any) -> dict[str, Any]:
 
 
 class IntentPromptBuilder(Component):
-    display_name = "02 Intent Prompt Builder"
+    display_name = "03 Intent Prompt Builder"
     description = "Builds the prompt that should be sent to the Langflow Gemini/LLM node for intent planning."
     inputs = [DataInput(name="payload", display_name="Payload", required=True)]
     outputs = [

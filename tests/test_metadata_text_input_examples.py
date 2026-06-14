@@ -295,11 +295,17 @@ def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeyp
     assert docs["domain:quantity_terms:lot_count"]["payload"]["aggregation"] == "nunique"
     assert docs["domain:metric_terms:achievement_rate"]["payload"]["required_quantity_terms"] == ["production", "target"]
     assert docs["domain:analysis_recipes:production_wip_target_rate"]["payload"]["grain_policy"] == "question_or_product_grain"
+    assert docs["domain:analysis_recipes:production_wip_target_rate"]["payload"]["source_aliases_by_family"] == {
+        "production": "production_data",
+        "wip": "wip_data",
+        "target": "target_data",
+    }
     assert docs["domain:analysis_recipes:lot_quantity_summary"]["payload"]["output_columns"] == [
         "LOT_COUNT",
         "WF_QTY",
         "DIE_QTY",
     ]
+    assert docs["domain:status_terms:hold_lot"]["payload"]["result_mode"] == "detail_rows"
 
 
 def test_worker_single_domain_text_input_saves_one_process_group(monkeypatch: Any) -> None:
@@ -327,6 +333,14 @@ def test_worker_bulk_table_text_input_saves_all_current_datasets(monkeypatch: An
     docs = store[("metadata_driven_agent_v2", "agent_v2_table_catalog_items")]
     assert set(docs) >= {"table_catalog:production_today", "table_catalog:wip_today", "table_catalog:hold_history"}
     assert docs["table_catalog:hold_history"]["payload"]["required_params"] == ["LOT_ID"]
+    assert docs["table_catalog:hold_history"]["payload"]["default_detail_columns"] == [
+        "LOT_ID",
+        "HOLD_TM",
+        "HOLD_CD",
+        "HOLD_DESC",
+        "HOLD_USER_ID",
+        "EVENT_CD",
+    ]
 
 
 def test_worker_single_table_text_input_saves_hold_history(monkeypatch: Any) -> None:
