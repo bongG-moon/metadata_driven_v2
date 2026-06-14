@@ -16,6 +16,7 @@ ALLOWED_SECTIONS = {
     "quantity_terms",
     "metric_terms",
     "status_terms",
+    "analysis_recipes",
     "product_key_columns",
 }
 
@@ -71,11 +72,13 @@ def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, l
             errors.append(f"{key} process_groups에는 processes 목록이 필요합니다.")
         if section in {"quantity_terms", "status_terms"} and payload.get("aggregation") == "count_distinct":
             payload["aggregation"] = "nunique"
-        if section in {"quantity_terms", "status_terms", "metric_terms"}:
+        if section in {"quantity_terms", "status_terms", "metric_terms", "analysis_recipes"}:
             if payload.get("required_quantity_terms") is not None:
                 payload["required_quantity_terms"] = _as_text_list(payload.get("required_quantity_terms"))
             if payload.get("output_column") is not None:
                 payload["output_column"] = _clean(payload.get("output_column"))
+        if section == "analysis_recipes":
+            _normalize_analysis_recipe_payload(payload)
     if not payload:
         errors.append(f"items[{index}] payload가 비어 있습니다.")
     item = {
@@ -88,6 +91,27 @@ def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, l
     if raw_item.get("columns"):
         item["columns"] = _as_text_list(raw_item.get("columns"))
     return item, errors
+
+
+def _normalize_analysis_recipe_payload(payload: dict[str, Any]) -> None:
+    for key in (
+        "required_dataset_families",
+        "output_columns",
+        "metric_terms",
+        "question_cues",
+        "forbidden_question_cues",
+    ):
+        if payload.get(key) is not None:
+            payload[key] = _as_text_list(payload.get(key))
+    for key in ("source_aliases_by_family", "dataset_role_by_family", "defaults"):
+        if not isinstance(payload.get(key, {}), dict):
+            payload[key] = {}
+    if payload.get("intent_type") is not None:
+        payload["intent_type"] = _clean(payload.get("intent_type"))
+    if payload.get("default_analysis_kind") is not None:
+        payload["default_analysis_kind"] = _clean(payload.get("default_analysis_kind"))
+    if payload.get("grain_policy") is not None:
+        payload["grain_policy"] = _clean(payload.get("grain_policy"))
 
 
 def _normalize_condition_overrides(payload: dict[str, Any], errors: list[str], key: str) -> None:

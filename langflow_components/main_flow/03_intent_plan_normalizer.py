@@ -31,6 +31,9 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
     request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
     question = str(request.get("question") or "")
     request_date = _request_date(payload)
+    recipe_key, recipe = _matching_analysis_recipe(question, metadata, plan)
+    if recipe:
+        _apply_analysis_recipe(plan, recipe_key, recipe, metadata, question, request_date, notes)
     normalized_jobs = []
     raw_jobs = plan.get("retrieval_jobs", [])
     if not raw_jobs and plan.get("intent_type") != "finish":
@@ -133,6 +136,294 @@ def _params_for_dataset(llm_json: dict[str, Any], dataset_key: str) -> dict[str,
     if isinstance(params_by_dataset, dict) and isinstance(params_by_dataset.get(dataset_key), dict):
         return deepcopy(params_by_dataset[dataset_key])
     return {}
+
+
+def _matching_analysis_recipe(question: str, metadata: dict[str, Any], plan: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
+    recipes = domain.get("analysis_recipes") if isinstance(domain.get("analysis_recipes"), dict) else {}
+    best_key = ""
+    best_recipe: dict[str, Any] = {}
+    best_score = 0
+    for recipe_key, recipe in recipes.items():
+        if not isinstance(recipe, dict):
+            continue
+        forbidden = recipe.get("forbidden_question_cues") if isinstance(recipe.get("forbidden_question_cues"), list) else []
+        if forbidden and _mentions_any(question, forbidden):
+            continue
+        score = _recipe_match_score(str(recipe_key), recipe, question, metadata, plan)
+        if score > best_score:
+            best_key = str(recipe_key)
+            best_recipe = recipe
+            best_score = score
+    return (best_key, best_recipe) if best_score >= 3 else ("", {})
+
+
+def _recipe_match_score(
+    recipe_key: str,
+    recipe: dict[str, Any],
+    question: str,
+    metadata: dict[str, Any],
+    plan: dict[str, Any],
+) -> int:
+    score = 0
+    default_kind = str(recipe.get("default_analysis_kind") or recipe_key)
+    if default_kind and str(plan.get("analysis_kind") or "") == default_kind:
+        score += 5
+    aliases = recipe.get("aliases") if isinstance(recipe.get("aliases"), list) else []
+    if _mentions_any(question, [recipe_key, recipe.get("display_name"), *aliases]):
+        score += 4
+    cues = recipe.get("question_cues") if isinstance(recipe.get("question_cues"), list) else []
+    matched_cues = [cue for cue in cues if _alias_in_text(question, cue)]
+    score += len(matched_cues)
+    if cues and len(matched_cues) == len(cues):
+        score += 2
+    domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
+    metric_terms = domain.get("metric_terms") if isinstance(domain.get("metric_terms"), dict) else {}
+    recipe_metric_terms = recipe.get("metric_terms") if isinstance(recipe.get("metric_terms"), list) else []
+    for metric_key in recipe_metric_terms:
+        metric = metric_terms.get(metric_key) if isinstance(metric_terms.get(metric_key), dict) else {}
+        metric_aliases = metric.get("aliases") if isinstance(metric.get("aliases"), list) else []
+        if _mentions_any(question, [metric_key, metric.get("display_name"), *metric_aliases]):
+            score += 3
+    return score
+
+
+def _apply_analysis_recipe(
+    plan: dict[str, Any],
+    recipe_key: str,
+    recipe: dict[str, Any],
+    metadata: dict[str, Any],
+    question: str,
+    request_date: str,
+    notes: list[str],
+) -> None:
+    default_kind = str(recipe.get("default_analysis_kind") or recipe_key).strip()
+    current_kind = str(plan.get("analysis_kind") or "none")
+    if default_kind and current_kind in {"", "none", "aggregate", "aggregate_join", "generic_analysis"}:
+        plan["analysis_kind"] = default_kind
+    if default_kind and (not plan.get("datasets") or not plan.get("retrieval_jobs")):
+        plan["analysis_kind"] = default_kind
+    intent_type = str(recipe.get("intent_type") or "").strip()
+    if intent_type and (not plan.get("retrieval_jobs") or str(plan.get("intent_type") or "") == "single_retrieval_analysis"):
+        plan["intent_type"] = intent_type
+    plan["matched_analysis_recipe"] = recipe_key
+    plan["recipe_grain_policy"] = recipe.get("grain_policy", "")
+    plan["product_grain"] = _resolve_recipe_grain(question, recipe, metadata, plan)
+    _apply_recipe_defaults(plan, recipe, question)
+
+    selected = _recipe_datasets(recipe, metadata, question)
+    if selected:
+        existing_datasets = _unique(plan.get("datasets", []))
+        plan["datasets"] = _unique([*existing_datasets, *[item["dataset_key"] for item in selected]])
+    existing_jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
+    _align_existing_jobs_to_recipe_families(plan, existing_jobs, selected, metadata, recipe_key, recipe, notes)
+    existing_dataset_keys = {str(job.get("dataset_key") or "") for job in existing_jobs if isinstance(job, dict)}
+    jobs_to_add = []
+    for item in selected:
+        dataset_key = item["dataset_key"]
+        if dataset_key in existing_dataset_keys:
+            continue
+        dataset_catalog = item["catalog"]
+        alias = _recipe_source_alias(recipe, item["family"], dataset_key, len(existing_jobs) + len(jobs_to_add))
+        jobs_to_add.append(
+            {
+                "job_id": f"recipe_{recipe_key}_{dataset_key}",
+                "dataset_key": dataset_key,
+                "source_alias": alias,
+                "purpose": f"recipe:{recipe_key}:{item['family']}",
+                "params": {},
+                "filters": [],
+                "required_columns": _recipe_required_columns(plan, recipe, item["family"], dataset_catalog),
+            }
+        )
+    if jobs_to_add:
+        plan["retrieval_jobs"] = [*existing_jobs, *jobs_to_add]
+    if not plan.get("step_plan"):
+        step = _recipe_step_plan(plan, recipe_key, recipe)
+        if step:
+            plan["step_plan"] = [step]
+    if selected or jobs_to_add:
+        _append_once(notes, f"analysis recipe '{recipe_key}' augmented missing datasets/retrieval jobs from metadata.")
+
+
+def _align_existing_jobs_to_recipe_families(
+    plan: dict[str, Any],
+    existing_jobs: list[Any],
+    selected: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    recipe_key: str,
+    recipe: dict[str, Any],
+    notes: list[str],
+) -> None:
+    if not existing_jobs or not selected:
+        return
+    catalog = ((metadata.get("table_catalog") or {}).get("datasets") or {}) if isinstance(metadata, dict) else {}
+    selected_by_family = {item["family"]: item for item in selected if item.get("family") and item.get("dataset_key")}
+    params_by_dataset = plan.get("params_by_dataset") if isinstance(plan.get("params_by_dataset"), dict) else {}
+    changed = False
+    for job in existing_jobs:
+        if not isinstance(job, dict):
+            continue
+        dataset_key = str(job.get("dataset_key") or "")
+        dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
+        family = str(dataset_catalog.get("dataset_family") or "")
+        selected_item = selected_by_family.get(family)
+        if not selected_item:
+            continue
+        selected_dataset_key = str(selected_item.get("dataset_key") or "")
+        if not selected_dataset_key or selected_dataset_key == dataset_key:
+            continue
+        selected_catalog = selected_item.get("catalog") if isinstance(selected_item.get("catalog"), dict) else {}
+        job["dataset_key"] = selected_dataset_key
+        job["job_id"] = f"recipe_{recipe_key}_{selected_dataset_key}"
+        job["purpose"] = f"recipe:{recipe_key}:{family}"
+        job["required_columns"] = _recipe_required_columns(plan, recipe, family, selected_catalog)
+        if dataset_key in params_by_dataset and selected_dataset_key not in params_by_dataset:
+            params_by_dataset[selected_dataset_key] = deepcopy(params_by_dataset[dataset_key])
+        params_by_dataset.pop(dataset_key, None)
+        changed = True
+    if changed:
+        plan["params_by_dataset"] = params_by_dataset
+        plan["datasets"] = _unique([str(job.get("dataset_key") or "") for job in existing_jobs if isinstance(job, dict)])
+        _append_once(notes, f"analysis recipe '{recipe_key}' aligned dataset families to metadata date/source scope.")
+
+
+def _apply_recipe_defaults(plan: dict[str, Any], recipe: dict[str, Any], question: str) -> None:
+    defaults = recipe.get("defaults") if isinstance(recipe.get("defaults"), dict) else {}
+    for key, value in defaults.items():
+        if key == "input_target_column":
+            continue
+        if key not in plan:
+            plan[key] = deepcopy(value)
+    if "input_target_column" in defaults and _mentions_any(question, ["INPUT계획", "INPUT 계획", "input plan"]):
+        plan["target_column"] = deepcopy(defaults["input_target_column"])
+    if recipe.get("output_columns") and "analysis_output_shape" not in plan:
+        plan["analysis_output_columns"] = deepcopy(recipe.get("output_columns"))
+
+
+def _resolve_recipe_grain(
+    question: str,
+    recipe: dict[str, Any],
+    metadata: dict[str, Any],
+    plan: dict[str, Any],
+) -> list[str]:
+    policy = str(recipe.get("grain_policy") or "").strip()
+    if policy == "aggregate_total":
+        return []
+    explicit_grain = _explicit_grain_from_question(question, metadata)
+    if explicit_grain is not None:
+        return explicit_grain
+    if _mentions_any(question, ["전체", "총", "합계", "total", "overall"]):
+        return []
+    current = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
+    if current:
+        return current
+    domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
+    return domain.get("product_key_columns", []) if isinstance(domain.get("product_key_columns"), list) else []
+
+
+def _explicit_grain_from_question(question: str, metadata: dict[str, Any]) -> list[str] | None:
+    text = str(question or "")
+    domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
+    product_grain = domain.get("product_key_columns", []) if isinstance(domain.get("product_key_columns"), list) else []
+    if _mentions_any(text, ["제품별", "제품 별", "제품 단위", "제품마다"]):
+        return product_grain
+    if _mentions_any(text, ["MODE별", "MODE 별", "모드별"]):
+        return ["MODE"]
+    if _mentions_any(text, ["공정별", "공정 별"]):
+        return ["OPER_NAME"]
+    return None
+
+
+def _recipe_datasets(recipe: dict[str, Any], metadata: dict[str, Any], question: str) -> list[dict[str, Any]]:
+    catalog = ((metadata.get("table_catalog") or {}).get("datasets") or {}) if isinstance(metadata, dict) else {}
+    families = _unique(recipe.get("required_dataset_families", []))
+    families.extend(_families_from_quantity_terms(recipe.get("required_quantity_terms", []), metadata))
+    selected = []
+    for family in _unique(families):
+        dataset_key = _dataset_for_family(family, catalog, question)
+        if not dataset_key:
+            continue
+        dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
+        selected.append({"family": family, "dataset_key": dataset_key, "catalog": dataset_catalog})
+    return selected
+
+
+def _families_from_quantity_terms(quantity_keys: Any, metadata: dict[str, Any]) -> list[str]:
+    domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
+    terms = domain.get("quantity_terms") if isinstance(domain.get("quantity_terms"), dict) else {}
+    families = []
+    quantity_list = quantity_keys if isinstance(quantity_keys, list) else []
+    for key in quantity_list:
+        term = terms.get(key) if isinstance(terms.get(key), dict) else {}
+        family = str(term.get("dataset_family") or "").strip()
+        if family:
+            families.append(family)
+    return families
+
+
+def _dataset_for_family(family: str, catalog: dict[str, Any], question: str) -> str:
+    candidates = [
+        (dataset_key, item)
+        for dataset_key, item in catalog.items()
+        if isinstance(item, dict) and str(item.get("dataset_family") or "") == family
+    ]
+    if not candidates:
+        return ""
+    mentions_yesterday = _mentions_any(question, ["어제", "전일", "yesterday"])
+    mentions_today = _mentions_any(question, ["오늘", "현재", "금일", "today", "current"])
+    if mentions_yesterday:
+        for dataset_key, item in candidates:
+            if str(item.get("date_scope") or "") == "history":
+                return str(dataset_key)
+    if mentions_today:
+        for dataset_key, item in candidates:
+            if str(item.get("date_scope") or "") == "current_day":
+                return str(dataset_key)
+    for dataset_key, item in candidates:
+        if str(item.get("date_scope") or "") == "current_day":
+            return str(dataset_key)
+    return str(candidates[0][0])
+
+
+def _recipe_source_alias(recipe: dict[str, Any], family: str, dataset_key: str, index: int) -> str:
+    aliases = recipe.get("source_aliases_by_family") if isinstance(recipe.get("source_aliases_by_family"), dict) else {}
+    alias = str(aliases.get(family) or "").strip()
+    return alias or f"{dataset_key}_{index + 1}"
+
+
+def _recipe_required_columns(
+    plan: dict[str, Any],
+    recipe: dict[str, Any],
+    family: str,
+    dataset_catalog: dict[str, Any],
+) -> list[str]:
+    columns = []
+    date_columns = (dataset_catalog.get("filter_mappings") or {}).get("DATE") if isinstance(dataset_catalog.get("filter_mappings"), dict) else []
+    columns.extend(_unique(date_columns))
+    product_grain = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
+    columns.extend(product_grain)
+    quantity = dataset_catalog.get("primary_quantity_column")
+    columns.extend(quantity if isinstance(quantity, list) else [quantity] if quantity else [])
+    if family == "target":
+        target_column = str(plan.get("target_column") or "").strip()
+        if target_column:
+            columns.append(target_column)
+    return _unique(columns)
+
+
+def _recipe_step_plan(plan: dict[str, Any], recipe_key: str, recipe: dict[str, Any]) -> dict[str, Any]:
+    kind = str(plan.get("analysis_kind") or recipe.get("default_analysis_kind") or "").strip()
+    if not kind:
+        return {}
+    return {
+        "step_id": f"apply_{recipe_key}",
+        "operation": kind,
+        "recipe_key": recipe_key,
+        "grain_policy": recipe.get("grain_policy", ""),
+        "group_by": plan.get("product_grain", []),
+        "output_columns": deepcopy(recipe.get("output_columns", [])),
+    }
 
 
 def _fallback_retrieval_jobs(
@@ -759,10 +1050,17 @@ def _metadata_context(intent_plan: dict[str, Any]) -> dict[str, Any]:
             if isinstance(condition, dict) and condition.get("field") and condition["field"] not in filter_keys:
                 filter_keys.append(condition["field"])
     return {
-        "domain_refs": [{"key": "product_grain", "columns": intent_plan.get("product_grain", [])}],
+        "domain_refs": _domain_refs(intent_plan),
         "table_refs": [{"dataset_key": key} for key in dataset_keys],
         "filter_refs": [{"filter_key": key} for key in filter_keys],
     }
+
+
+def _domain_refs(intent_plan: dict[str, Any]) -> list[dict[str, Any]]:
+    refs = [{"key": "product_grain", "columns": intent_plan.get("product_grain", [])}]
+    if intent_plan.get("matched_analysis_recipe"):
+        refs.append({"section": "analysis_recipes", "key": intent_plan["matched_analysis_recipe"]})
+    return refs
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:

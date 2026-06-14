@@ -116,7 +116,7 @@ def test_langflow_llm_node_style_flow_contract(monkeypatch: Any) -> None:
     assert "```python" in playground_message
 
 
-def test_intent_normalizer_builds_fallback_jobs_when_llm_omits_jobs(monkeypatch: Any) -> None:
+def test_intent_normalizer_builds_recipe_jobs_when_llm_omits_jobs(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
     intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
@@ -134,18 +134,29 @@ def test_intent_normalizer_builds_fallback_jobs_when_llm_omits_jobs(monkeypatch:
     payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
 
     assert payload["intent_plan"]["route"] == "multi_retrieval"
+    assert payload["intent_plan"]["matched_analysis_recipe"] == "production_wip_target_rate"
     assert [job["source_alias"] for job in payload["retrieval_jobs"]] == [
-        "production_today_1",
-        "wip_today_2",
-        "target_3",
+        "production_data",
+        "wip_data",
+        "target_data",
     ]
     assert [job["source_type"] for job in payload["retrieval_jobs"]] == ["oracle", "oracle", "goodocs"]
-    assert payload["intent_plan"]["step_plan"] == []
-    assert any("fallback jobs" in item for item in payload["warnings"])
+    assert payload["intent_plan"]["step_plan"][0]["recipe_key"] == "production_wip_target_rate"
+    assert payload["intent_plan"]["step_plan"][0]["group_by"] == [
+        "TECH",
+        "DEN",
+        "MODE",
+        "PKG_TYPE1",
+        "PKG_TYPE2",
+        "LEAD",
+        "MCP_NO",
+    ]
+    assert any("analysis recipe 'production_wip_target_rate'" in item for item in payload["warnings"])
+    assert not any("fallback jobs" in item for item in payload["warnings"])
     assert not any("fallback step_plan" in item for item in payload["warnings"])
 
 
-def test_intent_normalizer_does_not_default_specialized_datasets(monkeypatch: Any) -> None:
+def test_intent_normalizer_builds_recipe_jobs_when_llm_omits_specialized_datasets(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
     intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
@@ -160,10 +171,136 @@ def test_intent_normalizer_does_not_default_specialized_datasets(monkeypatch: An
 
     payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
 
+    assert payload["intent_plan"]["matched_analysis_recipe"] == "production_wip_target_rate"
+    assert payload["intent_plan"]["analysis_kind"] == "production_wip_target_rate"
+    assert [job["dataset_key"] for job in payload["retrieval_jobs"]] == ["production_today", "wip_today", "target"]
+    assert payload["intent_plan"]["step_plan"][0]["recipe_key"] == "production_wip_target_rate"
+    assert payload["intent_plan"]["route"] == "multi_retrieval"
+    assert any("analysis recipe 'production_wip_target_rate'" in item for item in payload["warnings"])
+
+
+def test_intent_normalizer_does_not_build_specialized_jobs_without_recipe_metadata(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("오늘 생산달성율을 보여줘", "test-session")
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    payload["metadata"]["domain_items"]["analysis_recipes"] = {}
+    intent_llm_json = {
+        "intent_type": "multi_source_analysis",
+        "analysis_kind": "production_wip_target_rate",
+        "reasoning_steps": ["Need production, WIP, and target values."],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+
     assert payload["retrieval_jobs"] == []
     assert payload["intent_plan"]["step_plan"] == []
-    assert payload["intent_plan"]["route"] == "multi_retrieval"
     assert any("no LLM-provided datasets" in item for item in payload["warnings"])
+
+
+def test_intent_normalizer_recipe_grain_policy_uses_question_scope(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("오늘 전체 생산달성율을 보여줘", "test-session")
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "multi_source_analysis",
+        "analysis_kind": "production_wip_target_rate",
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+
+    assert payload["intent_plan"]["matched_analysis_recipe"] == "production_wip_target_rate"
+    assert payload["intent_plan"]["product_grain"] == []
+    assert payload["intent_plan"]["step_plan"][0]["group_by"] == []
+
+
+def test_intent_normalizer_recipe_defaults_populate_plan(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("오늘 INPUT계획대비 D/A공정에서 생산량이 저조한 제품을 알려줘", "test-session")
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "multi_source_analysis",
+        "analysis_kind": "low_output_vs_target",
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+
+    assert payload["intent_plan"]["matched_analysis_recipe"] == "low_output_vs_target"
+    assert payload["intent_plan"]["production_column"] == "PRODUCTION"
+    assert payload["intent_plan"]["target_column"] == "INPUT_PLAN"
+    assert payload["intent_plan"]["threshold"] == 1.0
+
+
+def test_intent_normalizer_recipe_promotes_generic_lot_quantity_plan(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload(
+        "현재 DA공정에서 재공 lot이 몇개인지, wafer가 몇개인지, die수량은 몇개인지 알려줘",
+        "test-session",
+    )
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "single_retrieval_analysis",
+        "analysis_kind": "aggregate_join",
+        "datasets": ["lot_status"],
+        "retrieval_jobs": [
+            {
+                "dataset_key": "lot_status",
+                "source_alias": "lot_data",
+                "filters": [{"field": "OPER_NAME", "op": "in", "values": ["D/A1"]}],
+                "required_columns": ["LOT_ID", "OPER_NAME", "WF_QTY", "SUB_PROD_QTY"],
+            }
+        ],
+        "step_plan": [{"step_id": "aggregate_lot_quantities", "operation": "aggregate", "source_alias": "lot_data"}],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+
+    assert payload["intent_plan"]["matched_analysis_recipe"] == "lot_quantity_summary"
+    assert payload["intent_plan"]["analysis_kind"] == "lot_quantity_summary"
+    assert [job["dataset_key"] for job in payload["retrieval_jobs"]] == ["lot_status"]
+    assert {"LOT_ID", "WF_QTY", "SUB_PROD_QTY"}.issubset(set(payload["retrieval_jobs"][0]["required_columns"]))
+
+
+def test_intent_normalizer_recipe_aligns_history_dataset_for_date_split(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("어제 생산량과 오늘 생산계획의 차이수량을 제품별로 알려줘", "test-session")
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "multi_source_analysis",
+        "analysis_kind": "date_split_production_plan_gap",
+        "datasets": ["production_today", "target"],
+        "params_by_dataset": {
+            "production_today": {"DATE": "20260611"},
+            "target": {"DATE": "20260612"},
+        },
+        "retrieval_jobs": [
+            {"dataset_key": "production_today", "source_alias": "production_data", "params": {"DATE": "20260611"}},
+            {"dataset_key": "target", "source_alias": "target_data", "params": {"DATE": "20260612"}},
+        ],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+
+    assert payload["intent_plan"]["matched_analysis_recipe"] == "date_split_production_plan_gap"
+    assert [job["dataset_key"] for job in payload["retrieval_jobs"]] == ["production", "target"]
+    assert payload["intent_plan"]["datasets"] == ["production", "target"]
+    assert "production_today" not in payload["intent_plan"]["params_by_dataset"]
+    assert payload["intent_plan"]["params_by_dataset"]["production"]["DATE"] == "20260611"
+    assert any("aligned dataset families" in item for item in payload["warnings"])
 
 
 def test_intent_normalizer_builds_generic_rank_fallback_step(monkeypatch: Any) -> None:
@@ -422,6 +559,23 @@ def test_pandas_executor_normalizes_llm_result_column_names() -> None:
 
 def test_pandas_executor_normalizes_common_result_aliases() -> None:
     pandas_executor = load_component("langflow_components/main_flow/08_pandas_code_executor.py")
+    join_payload = {
+        "intent_plan": {"analysis_kind": "aggregate_join", "product_grain": ["MODE"]},
+        "state": {},
+        "runtime_sources": {},
+    }
+    join_llm_json = {
+        "code": "result_df = pd.DataFrame([{'MODE': 'LPDDR5', 'PRODUCTION_QUANTITY': 10, 'WIP_QUANTITY': 4}])",
+        "output_columns": ["MODE", "PRODUCTION_QUANTITY", "WIP_QUANTITY"],
+        "reasoning_steps": [],
+    }
+
+    join_result = pandas_executor.execute_pandas_from_llm(join_payload, json.dumps(join_llm_json, ensure_ascii=False))
+
+    assert join_result["analysis"]["columns"] == ["MODE", "PRODUCTION", "WIP"]
+    assert join_result["analysis"]["rows"][0]["PRODUCTION"] == 10
+    assert join_result["analysis"]["rows"][0]["WIP"] == 4
+
     aggregate_payload = {
         "intent_plan": {"analysis_kind": "aggregate_wip_total", "scope_label": "DA"},
         "state": {},
@@ -455,6 +609,24 @@ def test_pandas_executor_normalizes_common_result_aliases() -> None:
 
     assert lot_result["analysis"]["columns"] == ["LOT_COUNT", "WF_QTY", "DIE_QTY"]
     assert lot_result["analysis"]["rows"][0]["WF_QTY"] == 12
+
+    equipment_payload = {
+        "intent_plan": {"analysis_kind": "equipment_by_model"},
+        "state": {},
+        "runtime_sources": {},
+    }
+    equipment_llm_json = {
+        "code": "result_df = pd.DataFrame([{'EQP_MODEL': 'MODEL-A', 'EQP_COUNT': 2, 'TOTAL_PRESS_CNT': 9}])",
+        "output_columns": ["EQP_MODEL", "EQP_COUNT", "TOTAL_PRESS_CNT"],
+        "reasoning_steps": [],
+    }
+
+    equipment_result = pandas_executor.execute_pandas_from_llm(
+        equipment_payload, json.dumps(equipment_llm_json, ensure_ascii=False)
+    )
+
+    assert equipment_result["analysis"]["columns"] == ["EQP_MODEL", "EQP_COUNT", "PRESS_CNT"]
+    assert equipment_result["analysis"]["rows"][0]["PRESS_CNT"] == 9
 
 
 def test_answer_message_adapter_escapes_tilde_strikethrough_markdown() -> None:

@@ -30,6 +30,8 @@ def build_domain_authoring_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "Prefer structured JSON conditions, for example {\"TSV_DIE_TYP\": {\"exists\": true, \"not_in\": [null, \"\"]}}.",
             "Use condition_by_dataset or condition_by_family when the same business term must use different physical filters by dataset.",
             "For metric_terms, include required_quantity_terms and output_column when the text explains the needed measures or result name.",
+            "Use analysis_recipes when the text explains what kind of analysis plan should be built for a question pattern.",
+            "For analysis_recipes, keep group/grain as a policy such as question_or_product_grain instead of hardcoding one group-by column unless the text explicitly fixes it.",
             "Use aggregation='nunique' for distinct LOT_ID counts. Do not use count_distinct.",
             "",
             "Existing domain item summary for duplicate awareness:",
@@ -43,7 +45,7 @@ def build_domain_authoring_prompt_payload(payload_value: Any) -> dict[str, Any]:
                 {
                     "items": [
                         {
-                            "section": "process_groups | product_terms | quantity_terms | metric_terms | status_terms | product_key_columns",
+                            "section": "process_groups | product_terms | quantity_terms | metric_terms | status_terms | analysis_recipes | product_key_columns",
                             "key": "stable_key",
                             "payload": {
                                 "display_name": "business display name",
@@ -59,6 +61,13 @@ def build_domain_authoring_prompt_payload(payload_value: Any) -> dict[str, Any]:
                                 "formula": "optional formula",
                                 "calculation_rule": "optional rule",
                                 "required_quantity_terms": ["optional quantity term keys needed by a metric"],
+                                "required_dataset_families": ["optional dataset families needed by an analysis recipe"],
+                                "metric_terms": ["optional metric term keys used by an analysis recipe"],
+                                "intent_type": "optional intended intent type",
+                                "default_analysis_kind": "optional supported analysis_kind",
+                                "grain_policy": "optional, e.g. question_or_product_grain | aggregate_total | explicit",
+                                "source_aliases_by_family": {"dataset_family": "optional source alias"},
+                                "output_columns": ["optional standard output columns"],
                                 "output_column": "optional standard output column",
                             },
                             "columns": ["only for product_key_columns"],

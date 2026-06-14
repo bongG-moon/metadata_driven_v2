@@ -87,6 +87,21 @@ def test_domain_authoring_preserves_dataset_specific_conditions_and_metric_depen
                     "output_column": "ACHIEVEMENT_RATE",
                 },
             },
+            {
+                "section": "analysis_recipes",
+                "key": "production_wip_target_rate",
+                "payload": {
+                    "aliases": ["생산달성율"],
+                    "intent_type": "multi_source_analysis",
+                    "default_analysis_kind": "production_wip_target_rate",
+                    "required_quantity_terms": ["production", "wip", "target"],
+                    "required_dataset_families": ["production", "wip", "target"],
+                    "metric_terms": ["achievement_rate"],
+                    "grain_policy": "question_or_product_grain",
+                    "source_aliases_by_family": {"production": "production_data"},
+                    "output_columns": ["WIP", "PRODUCTION", "OUT_PLAN", "ACHIEVEMENT_RATE"],
+                },
+            },
         ],
         "missing_information": [],
         "warnings": [],
@@ -99,6 +114,14 @@ def test_domain_authoring_preserves_dataset_specific_conditions_and_metric_depen
     assert items["hbm"]["payload"]["condition_by_family"] == {"equipment": {"PKG_TYPE1": "HBM"}}
     assert items["achievement_rate"]["payload"]["required_quantity_terms"] == ["production", "target"]
     assert items["achievement_rate"]["payload"]["output_column"] == "ACHIEVEMENT_RATE"
+    assert items["production_wip_target_rate"]["section"] == "analysis_recipes"
+    assert items["production_wip_target_rate"]["payload"]["required_dataset_families"] == ["production", "wip", "target"]
+    assert items["production_wip_target_rate"]["payload"]["output_columns"] == [
+        "WIP",
+        "PRODUCTION",
+        "OUT_PLAN",
+        "ACHIEVEMENT_RATE",
+    ]
 
 
 def test_table_catalog_authoring_requires_source_config_and_detects_same_dataset_key() -> None:

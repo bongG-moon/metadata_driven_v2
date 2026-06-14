@@ -121,7 +121,11 @@ def _analysis_instruction(plan: dict[str, Any]) -> str:
             "['PRODUCTION', 'OUT_PLAN', 'BALANCE']; do not use names like yesterday_PRODUCTION or today_OUT_PLAN."
         )
     if kind == "equipment_by_model":
-        return "Group equipment rows by EQP_MODEL, calculate EQP_COUNT=EQPID.nunique() and PRESS_CNT=sum(PRESS_CNT)."
+        return (
+            "Group equipment rows by EQP_MODEL, calculate EQP_COUNT=EQPID.nunique() and PRESS_CNT=sum(PRESS_CNT). "
+            "The final result_df columns must be exactly ['EQP_MODEL', 'EQP_COUNT', 'PRESS_CNT']; "
+            "do not rename PRESS_CNT to TOTAL_PRESS_CNT and do not omit EQP_COUNT."
+        )
     return "Return an empty DataFrame with no rows."
 
 

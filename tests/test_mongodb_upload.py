@@ -30,6 +30,9 @@ def test_mongodb_upload_default_batches_include_only_core_metadata():
         "factory_table_catalog_metadata",
         "factory_filter_metadata",
     ]
+    assert "domain:analysis_recipes:production_wip_target_rate" in {
+        doc["_id"] for doc in batches["factory_domain_metadata"]
+    }
 
 
 def test_mongodb_upload_optional_batches_include_regression_and_samples():

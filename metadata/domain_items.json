@@ -83,12 +83,35 @@
       "quantity_column": "WIP",
       "aggregation": "sum"
     },
+    "target": {
+      "aliases": ["목표값", "목표", "계획", "생산계획", "OUT계획", "INPUT계획"],
+      "dataset_family": "target",
+      "quantity_column": ["INPUT_PLAN", "OUT_PLAN"],
+      "aggregation": "sum",
+      "output_column": "OUT_PLAN"
+    },
     "lot_count": {
       "aliases": ["Lot 수량", "LOT 수량", "Lot 개수", "lot count"],
       "dataset_key": "lot_status",
       "quantity_column": "LOT_ID",
       "aggregation": "nunique",
       "output_column": "LOT_COUNT"
+    },
+    "wafer_qty": {
+      "aliases": ["Wafer 수량", "WAFER 수량", "wafer", "wafer 개수", "wafer 몇개"],
+      "dataset_key": "lot_status",
+      "dataset_family": "lot",
+      "quantity_column": "WF_QTY",
+      "aggregation": "sum",
+      "output_column": "WF_QTY"
+    },
+    "die_qty": {
+      "aliases": ["Die 수량", "DIE 수량", "die", "die수량", "die 개수"],
+      "dataset_key": "lot_status",
+      "dataset_family": "lot",
+      "quantity_column": "SUB_PROD_QTY",
+      "aggregation": "sum",
+      "output_column": "DIE_QTY"
     }
   },
   "metric_terms": {
@@ -112,6 +135,93 @@
       "calculation_rule": "aggregate_first",
       "required_quantity_terms": ["wip", "production"],
       "output_column": "DYNAMIC_TAT"
+    }
+  },
+  "analysis_recipes": {
+    "production_wip_target_rate": {
+      "display_name": "생산/재공/목표/달성률 분석",
+      "aliases": ["생산달성률", "생산달성율", "달성률", "달성율", "재공 생산량 목표값 달성율"],
+      "question_cues": ["재공", "생산량", "목표"],
+      "intent_type": "multi_source_analysis",
+      "default_analysis_kind": "production_wip_target_rate",
+      "required_quantity_terms": ["production", "wip", "target"],
+      "required_dataset_families": ["production", "wip", "target"],
+      "metric_terms": ["achievement_rate"],
+      "grain_policy": "question_or_product_grain",
+      "source_aliases_by_family": {
+        "production": "production_data",
+        "wip": "wip_data",
+        "target": "target_data"
+      },
+      "output_columns": ["WIP", "PRODUCTION", "OUT_PLAN", "ACHIEVEMENT_RATE"]
+    },
+    "low_output_vs_target": {
+      "display_name": "계획 대비 생산 저조 분석",
+      "aliases": ["저조", "목표값 대비", "계획 대비", "INPUT계획대비", "생산량 저조", "목표 미달"],
+      "question_cues": ["생산량", "저조"],
+      "intent_type": "multi_source_analysis",
+      "default_analysis_kind": "low_output_vs_target",
+      "required_quantity_terms": ["production", "target"],
+      "required_dataset_families": ["production", "target"],
+      "metric_terms": ["achievement_rate", "target_gap"],
+      "grain_policy": "question_or_product_grain",
+      "source_aliases_by_family": {
+        "production": "production_data",
+        "target": "target_data"
+      },
+      "defaults": {
+        "threshold": 1.0,
+        "production_column": "PRODUCTION",
+        "target_column": "OUT_PLAN",
+        "input_target_column": "INPUT_PLAN"
+      },
+      "output_columns": ["PRODUCTION", "TARGET_QTY", "ACHIEVEMENT_RATE", "BALANCE", "LOW_OUTPUT_FLAG"]
+    },
+    "overall_production_wip_target": {
+      "display_name": "전체 생산/재공/목표 요약",
+      "aliases": ["생산량 재공 목표", "생산량/재공/목표", "전체 생산량 재공 목표"],
+      "question_cues": ["생산량", "재공", "목표"],
+      "intent_type": "multi_source_analysis",
+      "default_analysis_kind": "overall_production_wip_target",
+      "required_quantity_terms": ["production", "wip", "target"],
+      "required_dataset_families": ["production", "wip", "target"],
+      "grain_policy": "aggregate_total",
+      "source_aliases_by_family": {
+        "production": "production_data",
+        "wip": "wip_data",
+        "target": "target_data"
+      },
+      "output_columns": ["SCOPE", "PRODUCTION", "WIP", "OUT_PLAN"]
+    },
+    "date_split_production_plan_gap": {
+      "display_name": "서로 다른 날짜의 생산/계획 차이 분석",
+      "aliases": ["어제 생산량 오늘 생산계획 차이", "생산계획 차이수량", "계획 차이"],
+      "question_cues": ["어제", "오늘", "계획", "차이"],
+      "intent_type": "multi_source_analysis",
+      "default_analysis_kind": "date_split_production_plan_gap",
+      "required_quantity_terms": ["production", "target"],
+      "required_dataset_families": ["production", "target"],
+      "metric_terms": ["target_gap"],
+      "grain_policy": "question_or_product_grain",
+      "source_aliases_by_family": {
+        "production": "production_data",
+        "target": "target_data"
+      },
+      "output_columns": ["PRODUCTION", "OUT_PLAN", "BALANCE"]
+    },
+    "lot_quantity_summary": {
+      "display_name": "Lot/Wafer/Die 수량 요약",
+      "aliases": ["lot wafer die", "lot wafer die 수량", "재공 lot wafer die", "lot wafer die 요약"],
+      "question_cues": ["lot", "wafer", "die"],
+      "intent_type": "single_retrieval_analysis",
+      "default_analysis_kind": "lot_quantity_summary",
+      "required_quantity_terms": ["lot_count", "wafer_qty", "die_qty"],
+      "required_dataset_families": ["lot"],
+      "grain_policy": "aggregate_total",
+      "source_aliases_by_family": {
+        "lot": "lot_data"
+      },
+      "output_columns": ["LOT_COUNT", "WF_QTY", "DIE_QTY"]
     }
   },
   "status_terms": {

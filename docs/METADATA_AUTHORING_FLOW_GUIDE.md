@@ -96,12 +96,41 @@ metric은 계산식을 코드에 박지 않고 domain metadata에 둔다. 관련
 }
 ```
 
+질문 패턴에 따라 “어떤 수량과 dataset 계열을 같이 가져와서 어떤 분석 종류로 처리할지”가 반복된다면 `analysis_recipes`로 저장한다. 이는 예전 코드 fallback에 있던 판단을 metadata로 옮기는 용도다. 특정 질문 하나에 맞춘 코드 규칙이 아니라, 현장의 도메인 규칙을 자연어로 등록해 main flow가 공통 방식으로 읽게 한다.
+
+`group_by` 컬럼은 recipe에 고정하지 않는 것을 기본으로 한다. 작업자 질문이 “전체”라고 하면 전체 합계로, “제품별”이라고 하면 제품 기준으로, “공정별”이라고 하면 공정 기준으로 동작해야 하므로 recipe에는 `grain_policy`를 남긴다.
+
+```json
+{
+  "section": "analysis_recipes",
+  "key": "production_wip_target_rate",
+  "payload": {
+    "display_name": "생산/재공/목표/달성률 분석",
+    "aliases": ["생산달성률", "생산달성율", "달성률", "달성율"],
+    "question_cues": ["재공", "생산량", "목표"],
+    "intent_type": "multi_source_analysis",
+    "default_analysis_kind": "production_wip_target_rate",
+    "required_quantity_terms": ["production", "wip", "target"],
+    "required_dataset_families": ["production", "wip", "target"],
+    "metric_terms": ["achievement_rate"],
+    "grain_policy": "question_or_product_grain",
+    "source_aliases_by_family": {
+      "production": "production_data",
+      "wip": "wip_data",
+      "target": "target_data"
+    },
+    "output_columns": ["WIP", "PRODUCTION", "OUT_PLAN", "ACHIEVEMENT_RATE"]
+  }
+}
+```
+
 허용 `section`:
 
 - `process_groups`
 - `product_terms`
 - `quantity_terms`
 - `metric_terms`
+- `analysis_recipes`
 - `status_terms`
 - `product_key_columns`
 
@@ -475,6 +504,7 @@ Review prompt는 중복/유사 항목을 다시 너무 엄격하게 판정하지
 - `product_terms`나 `status_terms`인데 실제 조건이 전혀 없고 alias만 있다.
 - `quantity_terms`인데 어떤 dataset 또는 quantity column을 의미하는지 전혀 없다.
 - `metric_terms`인데 계산식, source_roles, comparison_rule, pandas_code_instructions 중 계산에 필요한 단서가 전혀 없다.
+- `analysis_recipes`인데 필요한 수량/데이터 계열, 분석 방식, 질문 패턴 단서가 모두 없다.
 - SQL, DB 접속 정보만 설명하고 있어 domain이 아니라 table catalog로 가야 한다.
 
 저장 차단하지 않아도 되는 예시:
@@ -711,6 +741,7 @@ langflow_components/domain_authoring_flow/
 - 상태 용어: `작업대기 Lot은 LOT_STAT_CD가 WAITING`
 - metric: `생산달성률은 생산량 / 목표값 * 100`
 - metric 의존 수량: `생산달성률 계산에는 생산량과 목표값이 필요함`
+- analysis recipe: `생산달성율 질문은 생산량, 재공, 목표 데이터가 필요하고 질문에서 전체/제품별/공정별이라고 말한 기준으로 묶음`
 - group by rule: `디바이스별은 DEVICE, DEVICE_DESC 기준`
 - detail rule: `Hold 이력은 집계하지 말고 row 목록으로 보여줘`
 

@@ -47,7 +47,10 @@ AUTO향, 오토모티브향, 오토향은 모두 같은 제품 조건입니다.
 수량 용어도 등록합니다.
 생산량, 생산실적, 실적은 production 계열 데이터의 PRODUCTION 컬럼을 합산합니다.
 재공, 재공수량, WIP, 공정 물량은 wip 계열 데이터의 WIP 컬럼을 합산합니다.
+목표값, 목표, 계획, 생산계획, OUT계획, INPUT계획은 target 계열 데이터의 INPUT_PLAN, OUT_PLAN 컬럼을 합산합니다. 기본 결과 컬럼명은 OUT_PLAN으로 봅니다.
 Lot 수량, LOT 수량, Lot 개수, lot count는 lot_status 데이터에서 LOT_ID를 중복 없이 세고, 결과 컬럼명은 LOT_COUNT로 봅니다.
+Wafer 수량, WAFER 수량, wafer, wafer 개수, wafer 몇개는 lot_status 데이터의 WF_QTY 컬럼을 합산하고, 결과 컬럼명은 WF_QTY로 봅니다.
+Die 수량, DIE 수량, die, die수량, die 개수는 lot_status 데이터의 SUB_PROD_QTY 컬럼을 합산하고, 결과 컬럼명은 DIE_QTY로 봅니다.
 
 지표 용어도 등록합니다.
 생산달성률, 달성율, 달성률은 생산량 합계를 OUT 계획 합계로 나누고 100을 곱해서 계산합니다.
@@ -57,6 +60,19 @@ Lot 수량, LOT 수량, Lot 개수, lot count는 lot_status 데이터에서 LOT_
 동적TAT, dynamic TAT는 재공 합계를 생산량 합계로 나눈 값입니다.
 이 지표를 계산하려면 재공과 생산량이 필요하고, 결과 컬럼명은 DYNAMIC_TAT로 보여 주세요.
 이 지표들은 먼저 합산한 뒤 계산해야 합니다.
+
+분석 질문 패턴도 등록합니다.
+생산달성률, 생산달성율, 달성률, 달성율 질문은 생산량, 재공, 목표 데이터가 필요하고 분석 방식은 production_wip_target_rate입니다.
+이 질문은 production, wip, target 계열 데이터를 같이 사용합니다.
+결과 컬럼은 WIP, PRODUCTION, OUT_PLAN, ACHIEVEMENT_RATE로 보여 주세요.
+묶는 기준은 고정하지 말고 질문에서 전체라고 하면 전체 합계, 제품별이라고 하면 제품 기준, 공정별이라고 하면 공정 기준으로 봅니다.
+생산 저조, 목표값 대비, 계획 대비, INPUT계획대비, 생산량 저조, 목표 미달 질문은 생산량과 목표 데이터가 필요하고 분석 방식은 low_output_vs_target입니다.
+이 질문은 production, target 계열 데이터를 같이 사용합니다.
+결과 컬럼은 PRODUCTION, TARGET_QTY, ACHIEVEMENT_RATE, BALANCE, LOW_OUTPUT_FLAG로 보여 주세요.
+묶는 기준은 질문에서 말한 기준을 따릅니다.
+Lot, Wafer, Die 수량 요약 질문은 lot_status 데이터를 사용하고 분석 방식은 lot_quantity_summary입니다.
+결과 컬럼은 LOT_COUNT, WF_QTY, DIE_QTY로 보여 주세요.
+묶는 기준은 기본적으로 전체 요약으로 봅니다.
 
 상태 용어도 등록합니다.
 hold lot, hold된 lot, hold상태 lot, Hold Lot은 lot_status 데이터에서 LOT_HOLD_STAT_CD가 HOLD 또는 OnHold인 row 목록으로 봅니다.
@@ -90,6 +106,30 @@ LPDDR5, LPDDR5제품, LPDDR5 제품은 같은 말입니다.
 Lot 수량이라는 용어를 등록할게요.
 Lot 수량, LOT 수량, Lot 개수, lot count는 lot_status 데이터에서 LOT_ID를 중복 없이 세는 값입니다.
 결과 컬럼명은 LOT_COUNT로 보여 주세요.
+```
+
+```text
+Wafer와 Die 수량 용어를 등록할게요.
+Wafer 수량, WAFER 수량, wafer, wafer 개수는 lot_status 데이터의 WF_QTY 컬럼을 합산한 값입니다.
+Die 수량, DIE 수량, die, die수량은 lot_status 데이터의 SUB_PROD_QTY 컬럼을 합산한 값입니다.
+결과 컬럼명은 각각 WF_QTY, DIE_QTY로 보여 주세요.
+```
+
+```text
+생산달성률 질문 패턴을 등록할게요.
+생산달성률, 생산달성율, 달성률, 달성율은 같은 질문 표현입니다.
+이 질문은 생산량, 재공, 목표 데이터가 필요하고, production, wip, target 계열 데이터를 같이 사용합니다.
+분석 방식은 production_wip_target_rate로 보면 됩니다.
+결과 컬럼은 WIP, PRODUCTION, OUT_PLAN, ACHIEVEMENT_RATE로 보여 주세요.
+묶는 기준은 질문에 따라 달라집니다. 전체라고 하면 전체 합계, 제품별이라고 하면 제품 기준, 공정별이라고 하면 공정 기준으로 봅니다.
+```
+
+```text
+Lot, Wafer, Die 수량 요약 질문 패턴을 등록할게요.
+작업자가 lot, wafer, die 수량을 같이 물어보면 lot_status 데이터를 사용합니다.
+분석 방식은 lot_quantity_summary로 보면 됩니다.
+결과 컬럼은 LOT_COUNT, WF_QTY, DIE_QTY로 보여 주세요.
+기본은 전체 요약으로 봅니다.
 ```
 
 ## 데이터셋을 한 번에 등록하는 예시

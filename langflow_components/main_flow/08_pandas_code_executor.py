@@ -132,13 +132,15 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
     analysis_kind = plan.get("analysis_kind")
 
     for base_name in ["PRODUCTION", "WIP", "OUT_PLAN", "TARGET_QTY", "LOT_COUNT", "WF_QTY", "DIE_QTY", "PRESS_CNT"]:
-        for suffix in ("_sum", "_total"):
+        for suffix in ("_sum", "_total", "_quantity", "_qty"):
             alias = f"{base_name}{suffix}"
             if base_name not in result.columns and alias in result.columns:
                 rename_map[alias] = base_name
 
     structural_alias_map = {
-        "WIP": ["TOTAL_WIP", "WIP_TOTAL", "WIP_SUM", "SUM_WIP"],
+        "WIP": ["TOTAL_WIP", "WIP_TOTAL", "WIP_SUM", "SUM_WIP", "WIP_QUANTITY", "WIP_QTY"],
+        "PRODUCTION": ["PRODUCTION_QUANTITY", "PRODUCTION_QTY"],
+        "PRESS_CNT": ["TOTAL_PRESS_CNT", "PRESS_COUNT"],
         "WF_QTY": ["WAFER_QTY", "WAFER_COUNT", "WF_COUNT"],
         "DIE_QTY": ["DIE_COUNT"],
         "EQP_COUNT": ["EQUIPMENT_COUNT", "EQP_CNT"],
