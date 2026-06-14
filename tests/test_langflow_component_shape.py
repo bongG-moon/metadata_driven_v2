@@ -122,3 +122,51 @@ def test_mongodb_metadata_components_expose_full_collection_names() -> None:
         assert "collection_prefix" not in input_names
         assert "metadata_source" not in input_names
         assert "metadata_dir" not in input_names
+
+
+def test_metadata_authoring_duplicate_action_inputs_are_dropdowns() -> None:
+    request_loader_files = [
+        "domain_authoring_flow/00_domain_authoring_request_loader.py",
+        "table_catalog_authoring_flow/00_table_catalog_authoring_request_loader.py",
+        "main_flow_filters_authoring_flow/00_main_flow_filter_authoring_request_loader.py",
+    ]
+    override_files = [
+        "domain_authoring_flow/05_domain_similarity_checker.py",
+        "domain_authoring_flow/07_domain_review_writer.py",
+        "table_catalog_authoring_flow/05_table_catalog_similarity_checker.py",
+        "table_catalog_authoring_flow/07_table_catalog_review_writer.py",
+        "main_flow_filters_authoring_flow/05_main_flow_filter_similarity_checker.py",
+        "main_flow_filters_authoring_flow/07_main_flow_filter_review_writer.py",
+    ]
+
+    for relative_path in request_loader_files:
+        duplicate_input = _component_input(relative_path, "duplicate_action")
+        assert duplicate_input.__class__.__name__ == "_DropdownField"
+        assert duplicate_input.value == "ask"
+        assert duplicate_input.options == ["ask", "merge", "replace", "skip", "create_new"]
+
+    for relative_path in override_files:
+        duplicate_input = _component_input(relative_path, "duplicate_action")
+        assert duplicate_input.__class__.__name__ == "_DropdownField"
+        assert duplicate_input.value == "use_payload"
+        assert duplicate_input.options == ["use_payload", "ask", "merge", "replace", "skip", "create_new"]
+
+
+def _component_input(relative_path: str, input_name: str):
+    path = PROJECT_ROOT / "langflow_components" / relative_path
+    module_name = f"input_contract_{path.stem}".replace(".", "_")
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+
+    component_classes = [
+        value
+        for value in module.__dict__.values()
+        if isinstance(value, type) and any("Component" in base.__name__ for base in value.__bases__)
+    ]
+    assert component_classes, f"{path} must define a Component subclass"
+    for input_item in getattr(component_classes[0], "inputs", []):
+        if getattr(input_item, "name", None) == input_name:
+            return input_item
+    raise AssertionError(f"{path} must expose input {input_name}")

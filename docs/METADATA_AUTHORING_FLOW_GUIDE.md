@@ -356,8 +356,9 @@ LLM이 헷갈릴 가능성이 있는 경우를 넓게 잡아 경고한다. 단, 
 Langflow에서는 두 가지 방식 중 하나를 선택한다.
 
 1. 단일 실행 flow
-   - `duplicate_action`을 Dropdown/Text Input으로 받아 writer에 전달한다.
-   - 기본값은 `ask`.
+   - `duplicate_action`은 DropdownInput으로 선택한다.
+   - `00 Request Loader`의 기본값은 `ask`.
+   - `05 Similarity Checker`와 `07 Review Writer`의 override 기본값은 `use_payload`이며, 이 값은 앞 payload의 결정을 그대로 사용한다.
    - 사용자가 처음 실행했을 때 중복이 발견되면 저장하지 않고 선택지를 반환한다.
    - 사용자가 같은 입력과 함께 `duplicate_action=merge` 또는 `replace`를 선택해 다시 실행한다.
 
@@ -764,7 +765,7 @@ JSON 변환과 검수:
 -> 07 MongoDB Writer.authoring_payload
 06 Review Normalizer.payload_out
 -> 07 MongoDB Writer.review_payload
-Dropdown/Text Input.duplicate_action
+DropdownInput.duplicate_action
 -> 07 MongoDB Writer.duplicate_action
 07 MongoDB Writer.write_result
 -> 08 Response Builder.write_result

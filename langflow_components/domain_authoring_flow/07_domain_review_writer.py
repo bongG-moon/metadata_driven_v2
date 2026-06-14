@@ -9,13 +9,14 @@ from importlib import import_module
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
-from lfx.io import DataInput, MessageTextInput, Output
+from lfx.io import DataInput, DropdownInput, MessageTextInput, Output
 from lfx.schema.data import Data
 
 
 DEFAULT_COLLECTION_NAME = "agent_v2_domain_items"
 COLLECTION_ENV_KEY = "MONGODB_DOMAIN_COLLECTION"
 LEGACY_COLLECTION_SUFFIX = "domain_items"
+DUPLICATE_ACTION_OPTIONS = ["use_payload", "ask", "merge", "replace", "skip", "create_new"]
 
 
 def review_and_write_domain_payload(
@@ -29,7 +30,7 @@ def review_and_write_domain_payload(
 ) -> dict[str, Any]:
     payload = _payload(payload_value)
     review = _normalize_review(_text(llm_response_value), payload)
-    action = _action(duplicate_action or (payload.get("duplicate_decision") or {}).get("action") or "ask")
+    action = _action_from_override(duplicate_action, payload)
     config = payload.get("mongo_config") if isinstance(payload.get("mongo_config"), dict) else {}
     database = _clean(mongo_database or config.get("database") or os.getenv("MONGODB_DATABASE") or "metadata_driven_agent_v2")
     collection = _resolve_collection_name(collection_name or config.get("collection"), collection_prefix or config.get("collection_prefix"))
@@ -195,6 +196,13 @@ def _action(value: Any) -> str:
     return action if action in {"ask", "merge", "replace", "skip", "create_new"} else "ask"
 
 
+def _action_from_override(value: Any, payload: dict[str, Any]) -> str:
+    override = _clean(value).lower()
+    if override in {"", "use_payload"}:
+        return _action((payload.get("duplicate_decision") or {}).get("action") or "ask")
+    return _action(override)
+
+
 def _text(value: Any) -> str:
     if value is None:
         return ""
@@ -241,7 +249,7 @@ class DomainReviewWriter(Component):
         MessageTextInput(name="mongo_uri", display_name="Mongo URI", value="", advanced=True),
         MessageTextInput(name="mongo_database", display_name="Mongo Database", value="", advanced=True),
         MessageTextInput(name="collection_name", display_name="Collection Name", value="", advanced=True),
-        MessageTextInput(name="duplicate_action", display_name="Duplicate Action Override", value="", advanced=True),
+        DropdownInput(name="duplicate_action", display_name="Duplicate Action Override", options=DUPLICATE_ACTION_OPTIONS, value="use_payload", advanced=True),
     ]
     outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]
 

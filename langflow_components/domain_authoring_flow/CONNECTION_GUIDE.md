@@ -41,7 +41,7 @@
 | 16 | `05 Domain Similarity Checker` | `payload_out` | `07 Domain Review Writer` | `payload` |
 | 17 | Gemini/LLM review node | text/message output | `07 Domain Review Writer` | `llm_response` |
 | 18 | Optional Text input | MongoDB URI override | `07 Domain Review Writer` | `mongo_uri` |
-| 19 | Optional Text input | `ask`, `merge`, `replace`, `skip`, `create_new` | `07 Domain Review Writer` | `duplicate_action` |
+| 19 | Dropdown input | `use_payload`, `ask`, `merge`, `replace`, `skip`, `create_new` | `07 Domain Review Writer` | `duplicate_action` |
 | 20 | `07 Domain Review Writer` | `payload_out` | `08 Domain Authoring Response Builder` | `payload` |
 | 21 | `08 Domain Authoring Response Builder` | `message` | `Chat Output` | `message` |
 
@@ -49,7 +49,8 @@
 
 - 기본값은 `ask`입니다.
 - 같은 `section/key`가 있으면 저장하지 않고 `merge`, `replace`, `skip`, `create_new` 중 선택하라는 응답을 반환합니다.
-- 사용자가 선택한 뒤 같은 입력을 다시 실행할 때 `00` 또는 `07`의 `duplicate_action`에 선택값을 넣습니다.
+- `00`의 `duplicate_action` dropdown은 기본값 `ask`이고, `05`/`07`의 override dropdown은 기본값 `use_payload`입니다.
+- 사용자가 선택한 뒤 같은 입력을 다시 실행할 때 `00` 또는 `07`의 `duplicate_action`에서 선택값을 고릅니다.
 - `merge`는 기존 doc과 새 payload를 병합하고, list는 중복 제거합니다.
 - `replace`는 같은 key의 doc을 새 내용으로 교체합니다.
 

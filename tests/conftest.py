@@ -13,6 +13,10 @@ class _Field:
         self.__dict__.update(kwargs)
 
 
+class _DropdownField(_Field):
+    pass
+
+
 class _Data:
     def __init__(self, data=None, **kwargs):
         self.data = data
@@ -44,6 +48,7 @@ schema_message = _ensure_module("lfx.schema.message")
 
 component.Component = _Component
 io.DataInput = _Field
+io.DropdownInput = _DropdownField
 io.MessageTextInput = _Field
 io.Output = _Field
 schema_data.Data = _Data
@@ -56,4 +61,3 @@ lfx.io = io
 lfx.schema = schema
 schema.data = schema_data
 schema.message = schema_message
-

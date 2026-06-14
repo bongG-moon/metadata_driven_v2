@@ -41,7 +41,7 @@
 | 16 | `05 Main Flow Filter Similarity Checker` | `payload_out` | `07 Main Flow Filter Review Writer` | `payload` |
 | 17 | Gemini/LLM review node | text/message output | `07 Main Flow Filter Review Writer` | `llm_response` |
 | 18 | Optional Text input | MongoDB URI override | `07 Main Flow Filter Review Writer` | `mongo_uri` |
-| 19 | Optional Text input | `ask`, `merge`, `replace`, `skip`, `create_new` | `07 Main Flow Filter Review Writer` | `duplicate_action` |
+| 19 | Dropdown input | `use_payload`, `ask`, `merge`, `replace`, `skip`, `create_new` | `07 Main Flow Filter Review Writer` | `duplicate_action` |
 | 20 | `07 Main Flow Filter Review Writer` | `payload_out` | `08 Main Flow Filter Authoring Response Builder` | `payload` |
 | 21 | `08 Main Flow Filter Authoring Response Builder` | `message` | `Chat Output` | `message` |
 

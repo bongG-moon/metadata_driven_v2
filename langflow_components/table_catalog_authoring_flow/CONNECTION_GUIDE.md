@@ -41,7 +41,7 @@
 | 16 | `05 Table Catalog Similarity Checker` | `payload_out` | `07 Table Catalog Review Writer` | `payload` |
 | 17 | Gemini/LLM review node | text/message output | `07 Table Catalog Review Writer` | `llm_response` |
 | 18 | Optional Text input | MongoDB URI override | `07 Table Catalog Review Writer` | `mongo_uri` |
-| 19 | Optional Text input | `ask`, `merge`, `replace`, `skip`, `create_new` | `07 Table Catalog Review Writer` | `duplicate_action` |
+| 19 | Dropdown input | `use_payload`, `ask`, `merge`, `replace`, `skip`, `create_new` | `07 Table Catalog Review Writer` | `duplicate_action` |
 | 20 | `07 Table Catalog Review Writer` | `payload_out` | `08 Table Catalog Authoring Response Builder` | `payload` |
 | 21 | `08 Table Catalog Authoring Response Builder` | `message` | `Chat Output` | `message` |
 

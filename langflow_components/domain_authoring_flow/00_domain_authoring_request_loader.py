@@ -7,7 +7,7 @@ from importlib import import_module
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
-from lfx.io import MessageTextInput, Output
+from lfx.io import DropdownInput, MessageTextInput, Output
 from lfx.schema.data import Data
 
 
@@ -23,6 +23,7 @@ DOMAIN_SECTIONS = {
 DEFAULT_COLLECTION_NAME = "agent_v2_domain_items"
 COLLECTION_ENV_KEY = "MONGODB_DOMAIN_COLLECTION"
 LEGACY_COLLECTION_SUFFIX = "domain_items"
+DUPLICATE_ACTION_OPTIONS = ["ask", "merge", "replace", "skip", "create_new"]
 
 
 def build_domain_authoring_request(
@@ -170,7 +171,7 @@ class DomainAuthoringRequestLoader(Component):
         MessageTextInput(name="mongo_uri", display_name="Mongo URI", value=""),
         MessageTextInput(name="mongo_database", display_name="Mongo Database", value="metadata_driven_agent_v2"),
         MessageTextInput(name="collection_name", display_name="Collection Name", value=DEFAULT_COLLECTION_NAME),
-        MessageTextInput(name="duplicate_action", display_name="Duplicate Action", value="ask", advanced=True),
+        DropdownInput(name="duplicate_action", display_name="Duplicate Action", options=DUPLICATE_ACTION_OPTIONS, value="ask", advanced=True),
         MessageTextInput(name="load_existing", display_name="Load Existing Items", value="true", advanced=True),
         MessageTextInput(name="load_limit", display_name="Load Limit", value="200", advanced=True),
     ]

@@ -3,13 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
-from lfx.io import DataInput, MessageTextInput, Output
+from lfx.io import DataInput, DropdownInput, Output
 from lfx.schema.data import Data
+
+
+DUPLICATE_ACTION_OPTIONS = ["use_payload", "ask", "merge", "replace", "skip", "create_new"]
 
 
 def check_table_catalog_similarity(payload_value: Any, duplicate_action: str = "") -> dict[str, Any]:
     payload = _payload(payload_value)
-    action = _action(duplicate_action or (payload.get("duplicate_decision") or {}).get("action") or "ask")
+    action = _action_from_override(duplicate_action, payload)
     matches = []
     warnings = []
     for item in payload.get("items", []):
@@ -76,6 +79,13 @@ def _action(value: Any) -> str:
     return action if action in {"ask", "merge", "replace", "skip", "create_new"} else "ask"
 
 
+def _action_from_override(value: Any, payload: dict[str, Any]) -> str:
+    override = _clean(value).lower()
+    if override in {"", "use_payload"}:
+        return _action((payload.get("duplicate_decision") or {}).get("action") or "ask")
+    return _action(override)
+
+
 def _payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
@@ -92,7 +102,7 @@ class TableCatalogSimilarityChecker(Component):
     description = "Warns about same or confusingly similar dataset metadata before saving."
     inputs = [
         DataInput(name="payload", display_name="Payload", required=True),
-        MessageTextInput(name="duplicate_action", display_name="Duplicate Action Override", value="", advanced=True),
+        DropdownInput(name="duplicate_action", display_name="Duplicate Action Override", options=DUPLICATE_ACTION_OPTIONS, value="use_payload", advanced=True),
     ]
     outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]
 
