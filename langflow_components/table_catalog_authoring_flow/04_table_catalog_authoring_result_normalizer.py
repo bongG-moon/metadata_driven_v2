@@ -65,8 +65,18 @@ def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, l
         errors.append(f"{dataset_key} columns 목록이 필요합니다.")
     if not isinstance(payload.get("filter_mappings"), dict):
         payload["filter_mappings"] = {}
+    else:
+        payload["filter_mappings"] = {
+            _clean(key): _as_text_list(value)
+            for key, value in payload["filter_mappings"].items()
+            if _clean(key)
+        }
     if not isinstance(payload.get("required_params"), list):
         payload["required_params"] = _as_text_list(payload.get("required_params"))
+    if payload.get("default_detail_columns") is not None:
+        payload["default_detail_columns"] = _as_text_list(payload.get("default_detail_columns"))
+    if payload.get("columns") is not None:
+        payload["columns"] = _as_text_list(payload.get("columns"))
     return {
         "dataset_key": dataset_key,
         "key": dataset_key,

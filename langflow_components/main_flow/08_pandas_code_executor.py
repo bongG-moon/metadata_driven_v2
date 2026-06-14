@@ -137,6 +137,22 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
             if base_name not in result.columns and alias in result.columns:
                 rename_map[alias] = base_name
 
+    structural_alias_map = {
+        "WIP": ["TOTAL_WIP", "WIP_TOTAL", "WIP_SUM", "SUM_WIP"],
+        "WF_QTY": ["WAFER_QTY", "WAFER_COUNT", "WF_COUNT"],
+        "DIE_QTY": ["DIE_COUNT"],
+        "EQP_COUNT": ["EQUIPMENT_COUNT", "EQP_CNT"],
+    }
+    for standard_name, aliases in structural_alias_map.items():
+        if standard_name in result.columns:
+            continue
+        for alias in aliases:
+            if alias in result.columns:
+                rename_map[alias] = standard_name
+                break
+    if analysis_kind == "lot_quantity_summary" and "DIE_QTY" not in result.columns and "SUB_PROD_QTY" in result.columns:
+        rename_map["SUB_PROD_QTY"] = "DIE_QTY"
+
     if analysis_kind == "rank_wip_then_join_production":
         if "WIP_RANK" not in result.columns and "rank" in result.columns:
             rename_map["rank"] = "WIP_RANK"
@@ -162,6 +178,8 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
 
     if rename_map:
         result = result.rename(columns=rename_map)
+    if analysis_kind == "aggregate_wip_total" and "SCOPE" not in result.columns and "WIP" in result.columns:
+        result.insert(0, "SCOPE", plan.get("scope_label") or "ALL")
     return _order_result_columns(result, plan)
 
 

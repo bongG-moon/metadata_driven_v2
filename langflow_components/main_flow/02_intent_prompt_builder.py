@@ -40,6 +40,8 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "Return one strict JSON object only. Do not wrap it in markdown.",
             "Think like a manufacturing analyst: split complex questions into ordered data/analysis steps.",
             "Use the provided metadata. Do not invent dataset keys or filter fields.",
+            "Resolve product/status words through domain metadata product_terms/status_terms before choosing filters.",
+            "Resolve metric words through domain metadata metric_terms and quantity_terms before choosing datasets.",
             "",
             "Current date parameter:",
             request_date,
@@ -101,6 +103,7 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "- Use overall_production_wip_target only when production, WIP, and target/plan are all requested together.",
             "- If a question asks yesterday production versus today's production plan gap, set analysis_kind=date_split_production_plan_gap.",
             "- Use aggregate_join only for a simple multi-source product-grain join with no target, rate, low-output, date-split, or lot quantity logic.",
+            "- If a required dataset, filter, formula, or value mapping is not present in metadata, do not hardcode it. Return the closest metadata-backed plan and explain the missing item in reasoning_steps.",
         ]
     )
     return {"prompt": prompt, "payload": payload, "prompt_type": "intent"}
@@ -124,7 +127,9 @@ def _metadata_summary(metadata: dict[str, Any]) -> dict[str, Any]:
     domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
     return {
         "process_groups": domain.get("process_groups", {}),
+        "product_terms": domain.get("product_terms", {}),
         "quantity_terms": domain.get("quantity_terms", {}),
+        "metric_terms": domain.get("metric_terms", {}),
         "status_terms": domain.get("status_terms", {}),
         "product_key_columns": domain.get("product_key_columns", []),
         "datasets": datasets,

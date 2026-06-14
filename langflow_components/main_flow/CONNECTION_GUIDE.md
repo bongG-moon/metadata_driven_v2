@@ -86,4 +86,5 @@ At #17, `runtime_sources` is compacted to preview rows plus `runtime_source_refs
 
 - metadata collection은 prefix 조합이 아니라 `domain_collection_name`, `table_catalog_collection_name`, `main_flow_filter_collection_name`에 full collection name을 직접 입력합니다.
 - result row collection도 prefix가 아니라 `result_collection_name` full name을 직접 입력합니다.
+- `03 Intent Plan Normalizer`는 LLM이 만든 `retrieval_jobs`를 그대로 통과시키지 않고, MongoDB metadata를 기준으로 필수 params, 날짜 형식, 공정/제품/상태 filter, 후속 질문의 이전 제품 key를 보강합니다. 계산식이나 공정별 특수 로직은 코드 fallback에 넣지 말고 domain/table/filter metadata로 보강해야 합니다.
 - `11 Answer Message Adapter`는 최종 payload를 새로 저장하지 않고, 앞 단계에서 이미 compact된 payload를 읽어 Playground용 Markdown만 만듭니다.

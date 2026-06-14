@@ -50,7 +50,19 @@
     "hbm": {
       "display_name": "HBM/3DS/TSV 제품",
       "aliases": ["HBM", "3DS", "TSV", "HBM제품", "HBM 제품"],
-      "condition": {"TSV_DIE_TYP": {"exists": true, "not_in": [null, ""]}}
+      "condition": {"TSV_DIE_TYP": {"exists": true, "not_in": [null, ""]}},
+      "condition_by_family": {
+        "production": {"PKG_TYPE1": "HBM"},
+        "wip": {"PKG_TYPE1": "HBM"},
+        "target": {"PKG_TYPE1": "HBM"},
+        "lot": {"PKG_TYPE1": "HBM"},
+        "equipment": {"PKG_TYPE1": "HBM"}
+      }
+    },
+    "lpddr5": {
+      "display_name": "LPDDR5 제품",
+      "aliases": ["LPDDR5", "LPDDR5제품", "LPDDR5 제품"],
+      "condition": {"MODE": "LPDDR5"}
     },
     "automotive": {
       "display_name": "AUTO향 제품",
@@ -83,17 +95,23 @@
     "achievement_rate": {
       "aliases": ["생산달성률", "달성율", "달성률"],
       "formula": "sum(PRODUCTION) / sum(OUT_PLAN) * 100",
-      "calculation_rule": "aggregate_first"
+      "calculation_rule": "aggregate_first",
+      "required_quantity_terms": ["production", "target"],
+      "output_column": "ACHIEVEMENT_RATE"
     },
     "target_gap": {
       "aliases": ["목표 미달", "부족분"],
       "formula": "max(sum(OUT_PLAN) - sum(PRODUCTION), 0)",
-      "calculation_rule": "aggregate_first"
+      "calculation_rule": "aggregate_first",
+      "required_quantity_terms": ["production", "target"],
+      "output_column": "BALANCE"
     },
     "dynamic_tat": {
       "aliases": ["동적TAT", "dynamic TAT"],
       "formula": "sum(WIP) / sum(PRODUCTION)",
-      "calculation_rule": "aggregate_first"
+      "calculation_rule": "aggregate_first",
+      "required_quantity_terms": ["wip", "production"],
+      "output_column": "DYNAMIC_TAT"
     }
   },
   "status_terms": {

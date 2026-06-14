@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
+from datetime import datetime, timedelta
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
@@ -27,6 +28,9 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
     plan["llm_intent_json"] = llm_json
     plan["llm_text_preview"] = llm_text[:1200]
 
+    request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+    question = str(request.get("question") or "")
+    request_date = _request_date(payload)
     normalized_jobs = []
     raw_jobs = plan.get("retrieval_jobs", [])
     if not raw_jobs and plan.get("intent_type") != "finish":
@@ -35,6 +39,7 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
             notes.append("retrieval_jobs were missing; built fallback jobs only from LLM-provided datasets, metadata, and request context.")
         else:
             errors.append("No retrieval_jobs were provided and no LLM-provided datasets were available for generic fallback job generation.")
+    _repair_followup_analysis_kind(plan, raw_jobs, catalog, notes)
     for index, raw_job in enumerate(raw_jobs):
         if not isinstance(raw_job, dict):
             continue
@@ -46,14 +51,27 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
         job = deepcopy(raw_job)
         job.setdefault("job_id", f"job_{index + 1}_{dataset_key}")
         job.setdefault("source_alias", dataset_key)
-        job.setdefault("params", _params_for_dataset(llm_json, dataset_key))
-        job.setdefault("filters", [])
-        job.setdefault("required_columns", dataset_catalog.get("columns", []))
+        params = _params_for_dataset(llm_json, dataset_key)
+        if isinstance(job.get("params"), dict):
+            params.update(deepcopy(job["params"]))
+        original_params = deepcopy(params)
+        _fill_required_params(params, dataset_key, dataset_catalog, question, request_date, job)
+        job["params"] = params
+        original_filters = deepcopy(job.get("filters")) if isinstance(job.get("filters"), list) else []
+        job["filters"] = _augmented_filters_for_job(job, plan, metadata, question, request_date)
+        if params != original_params or job["filters"] != original_filters:
+            _append_once(notes, "retrieval_jobs were augmented with metadata-derived params/filters.")
+        job["required_columns"] = _normalize_required_columns(
+            job.get("required_columns"),
+            dataset_catalog,
+            _required_product_grain(plan, dataset_catalog),
+        )
         job["source_type"] = dataset_catalog.get("source_type", job.get("source_type", "dummy"))
         if "primary_quantity_column" not in job and dataset_catalog.get("primary_quantity_column"):
             job["primary_quantity_column"] = deepcopy(dataset_catalog["primary_quantity_column"])
         normalized_jobs.append(job)
     plan["retrieval_jobs"] = normalized_jobs
+    _normalize_step_plan_columns(plan, normalized_jobs, catalog)
     plan["datasets"] = _unique([job["dataset_key"] for job in normalized_jobs] or llm_json.get("datasets", []))
     if not plan.get("step_plan"):
         fallback_steps = _fallback_step_plan(plan, metadata, payload)
@@ -130,16 +148,16 @@ def _fallback_retrieval_jobs(
     request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
     question = str(request.get("question") or "")
     request_date = _request_date(payload)
-    filters = plan.get("filters") if isinstance(plan.get("filters"), list) else []
-    if not filters:
-        filters = _infer_filters(question, metadata, plan.get("analysis_kind"), request_date)
 
     jobs = []
     for index, dataset_key in enumerate(datasets):
         dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
         params = _params_for_dataset(llm_json, dataset_key)
-        _fill_required_params(params, dataset_key, dataset_catalog, question, request_date)
+        shell_job = {"dataset_key": dataset_key, "source_alias": _fallback_alias(plan, dataset_key, index, len(datasets))}
+        _fill_required_params(params, dataset_key, dataset_catalog, question, request_date, shell_job)
         alias = _fallback_alias(plan, dataset_key, index, len(datasets))
+        shell_job.update({"source_alias": alias, "params": params, "filters": []})
+        filters = _augmented_filters_for_job(shell_job, plan, metadata, question, request_date)
         jobs.append(
             {
                 "job_id": f"fallback_{index + 1}_{dataset_key}",
@@ -147,13 +165,96 @@ def _fallback_retrieval_jobs(
                 "source_alias": alias,
                 "purpose": _fallback_purpose(plan.get("analysis_kind"), dataset_key),
                 "params": params,
-                "filters": _filters_for_dataset(filters, dataset_key, dataset_catalog),
+                "filters": filters,
                 "required_columns": dataset_catalog.get("columns", []),
                 "source_type": dataset_catalog.get("source_type", "dummy"),
                 "primary_quantity_column": deepcopy(dataset_catalog.get("primary_quantity_column")),
             }
         )
     return jobs
+
+
+def _normalize_required_columns(raw_columns: Any, catalog: dict[str, Any], product_grain: list[str] | None = None) -> list[str]:
+    catalog_columns = _unique(catalog.get("columns", []))
+    filter_mappings = catalog.get("filter_mappings") if isinstance(catalog.get("filter_mappings"), dict) else {}
+    columns = _unique(raw_columns if isinstance(raw_columns, list) and raw_columns else catalog_columns)
+    normalized: list[str] = []
+    for column in columns:
+        if column in catalog_columns:
+            normalized.append(column)
+            continue
+        mapped_columns = _unique(filter_mappings.get(column, []))
+        if mapped_columns:
+            normalized.extend(item for item in mapped_columns if item in catalog_columns or item not in normalized)
+        elif column:
+            normalized.append(column)
+    quantity = catalog.get("primary_quantity_column")
+    quantity_columns = quantity if isinstance(quantity, list) else [quantity] if quantity else []
+    normalized.extend(str(item) for item in quantity_columns if str(item or "").strip())
+    supported_product_columns = [column for column in _unique(product_grain or []) if column in catalog_columns]
+    normalized.extend(supported_product_columns)
+    return _unique(normalized)
+
+
+def _required_product_grain(plan: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
+    kind = str(plan.get("analysis_kind") or "")
+    product_grain_kinds = {
+        "rank_wip_then_join_production",
+        "rank_top_n",
+        "aggregate_join",
+        "production_wip_target_rate",
+        "low_output_vs_target",
+        "date_split_production_plan_gap",
+        "equipment_for_previous_products",
+    }
+    if kind not in product_grain_kinds:
+        return []
+    mappings = catalog.get("filter_mappings") if isinstance(catalog.get("filter_mappings"), dict) else {}
+    product_grain = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
+    return [column for column in product_grain if column in mappings or column in _unique(catalog.get("columns", []))]
+
+
+def _normalize_step_plan_columns(plan: dict[str, Any], jobs: list[dict[str, Any]], catalog: dict[str, Any]) -> None:
+    alias_to_catalog: dict[str, dict[str, Any]] = {}
+    for job in jobs:
+        dataset_key = str(job.get("dataset_key") or "")
+        alias = str(job.get("source_alias") or dataset_key)
+        dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
+        alias_to_catalog[alias] = dataset_catalog
+    for step in plan.get("step_plan", []):
+        if not isinstance(step, dict):
+            continue
+        source_alias = str(step.get("source_alias") or "")
+        dataset_catalog = alias_to_catalog.get(source_alias, {})
+        if not dataset_catalog:
+            continue
+        for key in ("group_by_columns", "join_keys"):
+            if isinstance(step.get(key), list):
+                step[key] = _map_logical_columns(step[key], dataset_catalog)
+        for key in ("count_column", "metric", "target_column"):
+            if isinstance(step.get(key), str):
+                mapped = _map_logical_columns([step[key]], dataset_catalog)
+                if mapped:
+                    step[key] = mapped[0]
+
+
+def _map_logical_columns(columns: list[Any], catalog: dict[str, Any]) -> list[str]:
+    catalog_columns = set(_unique(catalog.get("columns", [])))
+    mappings = catalog.get("filter_mappings") if isinstance(catalog.get("filter_mappings"), dict) else {}
+    result: list[str] = []
+    for column in columns:
+        text = str(column or "").strip()
+        if not text:
+            continue
+        if text in catalog_columns:
+            result.append(text)
+            continue
+        mapped = _unique(mappings.get(text, []))
+        if mapped:
+            result.append(mapped[0])
+        else:
+            result.append(text)
+    return _unique(result)
 
 
 def _fallback_alias(plan: dict[str, Any], dataset_key: str, index: int, dataset_count: int) -> str:
@@ -249,14 +350,53 @@ def _fallback_rank_order(plan: dict[str, Any], payload: dict[str, Any], kind: st
     return "desc"
 
 
-def _fill_required_params(params: dict[str, Any], dataset_key: str, catalog: dict[str, Any], question: str, request_date: str) -> None:
+def _fill_required_params(
+    params: dict[str, Any],
+    dataset_key: str,
+    catalog: dict[str, Any],
+    question: str,
+    request_date: str,
+    job: dict[str, Any] | None = None,
+) -> None:
     required = catalog.get("required_params") if isinstance(catalog.get("required_params"), list) else []
     if "DATE" in required and not params.get("DATE"):
-        params["DATE"] = _date_param(dataset_key, request_date)
+        date_value = _date_value_for_job(question, dataset_key, catalog, job or {}, request_date)
+        params["DATE"] = _date_param(dataset_key, date_value, catalog)
     if "LOT_ID" in required and not params.get("LOT_ID"):
         lot_id = _extract_lot_id(question)
         if lot_id:
             params["LOT_ID"] = lot_id
+
+
+def _augmented_filters_for_job(
+    job: dict[str, Any],
+    plan: dict[str, Any],
+    metadata: dict[str, Any],
+    question: str,
+    request_date: str,
+) -> list[dict[str, Any]]:
+    table_catalog = metadata.get("table_catalog") if isinstance(metadata.get("table_catalog"), dict) else {}
+    datasets = table_catalog.get("datasets") if isinstance(table_catalog.get("datasets"), dict) else {}
+    dataset_key = str(job.get("dataset_key") or "")
+    dataset_catalog = datasets.get(dataset_key) if isinstance(datasets.get(dataset_key), dict) else {}
+    raw_filters = job.get("filters") if isinstance(job.get("filters"), list) else []
+    plan_filters = plan.get("filters") if isinstance(plan.get("filters"), list) else []
+    inferred_filters = _infer_filters(
+        question,
+        metadata,
+        plan.get("analysis_kind"),
+        request_date,
+        dataset_key=dataset_key,
+        dataset_catalog=dataset_catalog,
+        job=job,
+    )
+    merged = [deepcopy(item) for item in raw_filters if isinstance(item, dict)]
+    merged.extend(deepcopy(item) for item in plan_filters if isinstance(item, dict))
+    merged.extend(deepcopy(item) for item in inferred_filters if isinstance(item, dict))
+    if plan.get("state_product_keys") and _supports_product_grain_filter(dataset_catalog, plan):
+        merged.append({"field": "PRODUCT_GRAIN", "op": "from_state"})
+    merged = _drop_conflicting_product_alias_filters(merged, inferred_filters, metadata)
+    return _filters_for_dataset(_dedupe_filters(merged), dataset_key, dataset_catalog)
 
 
 def _filters_for_dataset(filters: list[Any], dataset_key: str, catalog: dict[str, Any]) -> list[dict[str, Any]]:
@@ -269,18 +409,31 @@ def _filters_for_dataset(filters: list[Any], dataset_key: str, catalog: dict[str
         if not field:
             continue
         if field == "PRODUCT_GRAIN" or field in mappings:
-            result.append(deepcopy(item))
-    return result
+            clean_item = deepcopy(item)
+            if field == "DATE":
+                _normalize_date_filter(clean_item, dataset_key, catalog)
+            result.append(clean_item)
+    return _dedupe_filters(result)
 
 
-def _infer_filters(question: str, metadata: dict[str, Any], analysis_kind: Any, request_date: str) -> list[dict[str, Any]]:
+def _infer_filters(
+    question: str,
+    metadata: dict[str, Any],
+    analysis_kind: Any,
+    request_date: str,
+    dataset_key: str = "",
+    dataset_catalog: dict[str, Any] | None = None,
+    job: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     text = str(question or "")
+    catalog = dataset_catalog or {}
     filters: list[dict[str, Any]] = []
-    if _mentions_any(text, ["오늘", "현재", "today", "current"]) and _metadata_has_filter(metadata, "DATE"):
-        filters.append({"field": "DATE", "op": "eq", "value": request_date})
-    filters.extend(_metadata_term_filters(text, metadata))
+    date_value = _date_value_for_job(text, dataset_key, catalog, job or {}, request_date)
+    if date_value and _metadata_has_filter(metadata, "DATE") and _catalog_has_filter(catalog, "DATE"):
+        filters.append({"field": "DATE", "op": "eq", "value": date_value})
+    filters.extend(_metadata_term_filters(text, metadata, dataset_key, catalog))
     process_values = _metadata_process_values(text, metadata)
-    if process_values and _metadata_has_filter(metadata, "OPER_NAME"):
+    if process_values and _metadata_has_filter(metadata, "OPER_NAME") and _catalog_has_filter(catalog, "OPER_NAME"):
         filters.append({"field": "OPER_NAME", "op": "in", "values": _unique(process_values)})
     if str(analysis_kind or "") == "equipment_for_previous_products":
         filters.append({"field": "PRODUCT_GRAIN", "op": "from_state"})
@@ -290,7 +443,14 @@ def _infer_filters(question: str, metadata: dict[str, Any], analysis_kind: Any, 
 def _attach_state_product_keys(plan: dict[str, Any], payload: dict[str, Any]) -> None:
     if plan.get("state_product_keys"):
         return
-    if plan.get("analysis_kind") != "equipment_for_previous_products":
+    request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+    question = str(request.get("question") or "")
+    needs_state_products = (
+        plan.get("analysis_kind") == "equipment_for_previous_products"
+        or plan.get("intent_type") == "followup_transform"
+        or _mentions_any(question, ["이 제품", "그 제품", "해당 제품", "앞의 제품", "위 제품", "previous products"])
+    )
+    if not needs_state_products:
         return
     product_grain = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
@@ -307,6 +467,29 @@ def _attach_state_product_keys(plan: dict[str, Any], payload: dict[str, Any]) ->
         plan["state_product_keys"] = product_rows
 
 
+def _repair_followup_analysis_kind(
+    plan: dict[str, Any],
+    raw_jobs: list[Any],
+    catalog: dict[str, Any],
+    notes: list[str],
+) -> None:
+    if plan.get("intent_type") != "followup_transform" or not plan.get("state_product_keys"):
+        return
+    families = []
+    for raw_job in raw_jobs:
+        if not isinstance(raw_job, dict):
+            continue
+        dataset_key = str(raw_job.get("dataset_key") or "")
+        dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
+        family = str(dataset_catalog.get("dataset_family") or "")
+        if family:
+            families.append(family)
+    if any(family in {"equipment", "capacity"} for family in families):
+        if str(plan.get("analysis_kind") or "") in {"equipment_by_model", "detail_rows", "none"}:
+            plan["analysis_kind"] = "equipment_for_previous_products"
+            _append_once(notes, "follow-up plan was aligned to previous product keys from state.")
+
+
 def _rows_from_current_data(current_data: dict[str, Any]) -> list[dict[str, Any]]:
     rows = current_data.get("rows")
     if isinstance(rows, list):
@@ -319,7 +502,12 @@ def _rows_from_current_data(current_data: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
-def _metadata_term_filters(question: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+def _metadata_term_filters(
+    question: str,
+    metadata: dict[str, Any],
+    dataset_key: str = "",
+    dataset_catalog: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
     result: list[dict[str, Any]] = []
     for section_name in ("product_terms", "status_terms"):
@@ -331,7 +519,7 @@ def _metadata_term_filters(question: str, metadata: dict[str, Any]) -> list[dict
             match_values = [term_key, term.get("display_name"), *aliases]
             if not _mentions_any(question, match_values):
                 continue
-            condition = term.get("condition") if isinstance(term.get("condition"), dict) else {}
+            condition = _condition_for_dataset(term, dataset_key, dataset_catalog or {})
             result.extend(_condition_to_filters(condition, metadata))
     return result
 
@@ -339,6 +527,17 @@ def _metadata_term_filters(question: str, metadata: dict[str, Any]) -> list[dict
 def _metadata_process_values(question: str, metadata: dict[str, Any]) -> list[str]:
     domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
     groups = domain.get("process_groups") if isinstance(domain.get("process_groups"), dict) else {}
+    exact_matches: list[str] = []
+    for group in groups.values():
+        if not isinstance(group, dict):
+            continue
+        values = group.get("processes") if isinstance(group.get("processes"), list) else []
+        for value in values:
+            text = str(value or "").strip()
+            if text and _alias_in_text(question, text):
+                exact_matches.append(text)
+    if exact_matches:
+        return _unique(exact_matches)
     result: list[str] = []
     for group_key, group in groups.items():
         if not isinstance(group, dict):
@@ -350,6 +549,17 @@ def _metadata_process_values(question: str, metadata: dict[str, Any]) -> list[st
         values = group.get("processes") if isinstance(group.get("processes"), list) else []
         result.extend(str(item) for item in values if str(item or "").strip())
     return _unique(result)
+
+
+def _condition_for_dataset(term: dict[str, Any], dataset_key: str, dataset_catalog: dict[str, Any]) -> dict[str, Any]:
+    overrides = term.get("condition_by_dataset") if isinstance(term.get("condition_by_dataset"), dict) else {}
+    if dataset_key and isinstance(overrides.get(dataset_key), dict):
+        return overrides[dataset_key]
+    family_overrides = term.get("condition_by_family") if isinstance(term.get("condition_by_family"), dict) else {}
+    family = str(dataset_catalog.get("dataset_family") or "")
+    if family and isinstance(family_overrides.get(family), dict):
+        return family_overrides[family]
+    return term.get("condition") if isinstance(term.get("condition"), dict) else {}
 
 
 def _condition_to_filters(condition: dict[str, Any], metadata: dict[str, Any]) -> list[dict[str, Any]]:
@@ -377,6 +587,63 @@ def _condition_to_filters(condition: dict[str, Any], metadata: dict[str, Any]) -
 def _metadata_has_filter(metadata: dict[str, Any], filter_key: str) -> bool:
     filters = metadata.get("main_flow_filters") if isinstance(metadata.get("main_flow_filters"), dict) else {}
     return str(filter_key or "") in filters
+
+
+def _catalog_has_filter(catalog: dict[str, Any], filter_key: str) -> bool:
+    mappings = catalog.get("filter_mappings") if isinstance(catalog.get("filter_mappings"), dict) else {}
+    return str(filter_key or "") in mappings
+
+
+def _supports_product_grain_filter(catalog: dict[str, Any], plan: dict[str, Any]) -> bool:
+    mappings = catalog.get("filter_mappings") if isinstance(catalog.get("filter_mappings"), dict) else {}
+    product_grain = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
+    return any(str(column or "") in mappings for column in product_grain)
+
+
+def _drop_conflicting_product_alias_filters(
+    filters: list[dict[str, Any]],
+    inferred_filters: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> list[dict[str, Any]]:
+    inferred_values = _filter_values(inferred_filters)
+    if not inferred_values:
+        return filters
+    domain = metadata.get("domain_items") if isinstance(metadata.get("domain_items"), dict) else {}
+    product_fields = set(domain.get("product_key_columns") or [])
+    inferred_fields = {str(item.get("field") or "") for item in inferred_filters if isinstance(item, dict)}
+    inferred_keys = {json.dumps(item, ensure_ascii=False, sort_keys=True, default=str) for item in inferred_filters}
+    result = []
+    for item in filters:
+        field = str(item.get("field") or "")
+        item_key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+        if item_key in inferred_keys or field not in product_fields or field in inferred_fields:
+            result.append(item)
+            continue
+        if _filter_values([item]) & inferred_values:
+            continue
+        result.append(item)
+    return result
+
+
+def _filter_values(filters: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for item in filters:
+        if not isinstance(item, dict):
+            continue
+        if "value" in item:
+            result.add(str(item.get("value") or "").upper())
+        values = item.get("values")
+        if isinstance(values, list):
+            result.update(str(value or "").upper() for value in values)
+    return {value for value in result if value}
+
+
+def _normalize_date_filter(item: dict[str, Any], dataset_key: str, catalog: dict[str, Any]) -> None:
+    if item.get("value"):
+        item["value"] = _date_param(dataset_key, str(item["value"]), catalog)
+    values = item.get("values")
+    if isinstance(values, list):
+        item["values"] = [_date_param(dataset_key, str(value), catalog) for value in values]
 
 
 def _dedupe_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -417,10 +684,57 @@ def _request_date(payload: dict[str, Any]) -> str:
     return date_value.replace("-", "")
 
 
-def _date_param(dataset_key: str, request_date: str) -> str:
-    if dataset_key == "target" and len(request_date) == 8:
-        return f"{request_date[0:4]}-{request_date[4:6]}-{request_date[6:8]}"
-    return request_date
+def _date_value_for_job(
+    question: str,
+    dataset_key: str,
+    catalog: dict[str, Any],
+    job: dict[str, Any],
+    request_date: str,
+) -> str:
+    text = " ".join(
+        [
+            str(question or ""),
+            str(job.get("source_alias") or ""),
+            str(job.get("purpose") or ""),
+            str(dataset_key or ""),
+            str(catalog.get("display_name") or ""),
+        ]
+    )
+    family = str(catalog.get("dataset_family") or "")
+    scope = str(catalog.get("date_scope") or "")
+    mentions_yesterday = _mentions_any(text, ["어제", "전일", "yesterday", "previous day"])
+    mentions_today = _mentions_any(text, ["오늘", "현재", "금일", "today", "current"])
+    if mentions_yesterday:
+        if "어제" in str(job.get("purpose") or "") or "yesterday" in str(job.get("purpose") or "").lower():
+            return _shift_date(request_date, -1)
+        if family == "production" and _mentions_any(question, ["어제", "전일", "yesterday"]):
+            return _shift_date(request_date, -1)
+        if not mentions_today:
+            return _shift_date(request_date, -1)
+    if mentions_today or scope == "current_day":
+        return request_date
+    return ""
+
+
+def _shift_date(date_value: str, days: int) -> str:
+    clean = str(date_value or "").replace("-", "")
+    try:
+        return (datetime.strptime(clean, "%Y%m%d") + timedelta(days=days)).strftime("%Y%m%d")
+    except ValueError:
+        return clean
+
+
+def _date_param(dataset_key: str, request_date: str, catalog: dict[str, Any] | None = None) -> str:
+    clean = str(request_date or "").replace("-", "")
+    date_format = str((catalog or {}).get("date_format") or "")
+    if (dataset_key == "target" or date_format == "YYYY-MM-DD") and len(clean) == 8:
+        return f"{clean[0:4]}-{clean[4:6]}-{clean[6:8]}"
+    return clean
+
+
+def _append_once(values: list[str], message: str) -> None:
+    if message not in values:
+        values.append(message)
 
 
 def _route_for_intent(intent_type: Any, job_count: int) -> str:

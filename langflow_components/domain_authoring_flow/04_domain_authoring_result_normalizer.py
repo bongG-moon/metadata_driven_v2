@@ -65,10 +65,17 @@ def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, l
         payload = {"columns": columns, "product_key_columns": columns}
     else:
         payload.setdefault("aliases", _as_text_list(payload.get("aliases")))
+        if section in {"product_terms", "status_terms"}:
+            _normalize_condition_overrides(payload, errors, key)
         if section == "process_groups" and not _as_text_list(payload.get("processes")):
             errors.append(f"{key} process_groups에는 processes 목록이 필요합니다.")
         if section in {"quantity_terms", "status_terms"} and payload.get("aggregation") == "count_distinct":
             payload["aggregation"] = "nunique"
+        if section in {"quantity_terms", "status_terms", "metric_terms"}:
+            if payload.get("required_quantity_terms") is not None:
+                payload["required_quantity_terms"] = _as_text_list(payload.get("required_quantity_terms"))
+            if payload.get("output_column") is not None:
+                payload["output_column"] = _clean(payload.get("output_column"))
     if not payload:
         errors.append(f"items[{index}] payload가 비어 있습니다.")
     item = {
@@ -81,6 +88,27 @@ def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, l
     if raw_item.get("columns"):
         item["columns"] = _as_text_list(raw_item.get("columns"))
     return item, errors
+
+
+def _normalize_condition_overrides(payload: dict[str, Any], errors: list[str], key: str) -> None:
+    for field_name in ("condition_by_dataset", "condition_by_family"):
+        value = payload.get(field_name)
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            errors.append(f"{key} {field_name}는 object여야 합니다.")
+            payload.pop(field_name, None)
+            continue
+        clean_value = {}
+        for target_key, condition in value.items():
+            clean_key = _clean(target_key)
+            if not clean_key:
+                continue
+            if isinstance(condition, dict):
+                clean_value[clean_key] = condition
+            else:
+                errors.append(f"{key} {field_name}.{clean_key}는 condition object여야 합니다.")
+        payload[field_name] = clean_value
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:

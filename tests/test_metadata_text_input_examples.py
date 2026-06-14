@@ -20,13 +20,14 @@ DS는 D/S라고도 부르고 실제 공정은 D/S1, D/S2입니다.
 FCB는 FCB라고 부르고 실제 공정은 FCB1, FCB2입니다.
 FCBH는 FCBH라고 부르고 실제 공정은 FCBH1, FCBH2입니다.
 BM은 B/M 또는 비엠이라고도 부르고 실제 공정은 B/M1, B/M2입니다.
-HBM, 3DS, TSV는 TSV_DIE_TYP 값이 있고 비어 있지 않은 제품입니다.
+HBM, 3DS, TSV는 TSV_DIE_TYP 값이 있고 비어 있지 않은 제품입니다. equipment 계열 데이터에서는 PKG_TYPE1이 HBM인 제품으로 보면 됩니다.
+LPDDR5는 MODE 값이 LPDDR5인 제품입니다.
 AUTO향은 MCP_NO 값이 있고 마지막 문자가 I, O, N, P, Q, V 중 하나인 제품입니다.
 생산량은 production 계열의 PRODUCTION 합계이고, 재공은 wip 계열의 WIP 합계입니다.
 Lot 수량은 lot_status에서 LOT_ID를 중복 없이 세고 LOT_COUNT로 보여 주세요.
-생산달성률은 생산량 합계 / OUT 계획 합계 * 100입니다.
-목표 미달은 OUT 계획 합계 - 생산량 합계이며 음수면 0입니다.
-동적TAT는 재공 합계 / 생산량 합계입니다.
+생산달성률은 생산량 합계 / OUT 계획 합계 * 100이고 생산량과 목표값이 필요하며 결과 컬럼명은 ACHIEVEMENT_RATE입니다.
+목표 미달은 OUT 계획 합계 - 생산량 합계이며 음수면 0이고 생산량과 목표값이 필요하며 결과 컬럼명은 BALANCE입니다.
+동적TAT는 재공 합계 / 생산량 합계이고 재공과 생산량이 필요하며 결과 컬럼명은 DYNAMIC_TAT입니다.
 Hold Lot은 LOT_HOLD_STAT_CD가 HOLD 또는 OnHold인 row 목록입니다.
 작업대기 Lot은 LOT_STAT_CD가 WAITING인 LOT_ID 중복 없는 수량입니다.
 작업중 Lot은 LOT_STAT_CD가 RUNNING인 LOT_ID 중복 없는 수량입니다.
@@ -274,10 +275,17 @@ def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeyp
 
     assert written["raw_text"] == DOMAIN_BULK_TEXT
     assert written["write_result"]["status"] == "ok"
-    assert written["write_result"]["saved_count"] == 21
+    assert written["write_result"]["saved_count"] == 22
     docs = store[("metadata_driven_agent_v2", "agent_v2_domain_items")]
-    assert set(docs) >= {"domain:process_groups:DA", "domain:product_terms:hbm", "domain:quantity_terms:lot_count"}
+    assert set(docs) >= {
+        "domain:process_groups:DA",
+        "domain:product_terms:hbm",
+        "domain:product_terms:lpddr5",
+        "domain:quantity_terms:lot_count",
+    }
+    assert docs["domain:product_terms:hbm"]["payload"]["condition_by_family"]["equipment"] == {"PKG_TYPE1": "HBM"}
     assert docs["domain:quantity_terms:lot_count"]["payload"]["aggregation"] == "nunique"
+    assert docs["domain:metric_terms:achievement_rate"]["payload"]["required_quantity_terms"] == ["production", "target"]
 
 
 def test_worker_single_domain_text_input_saves_one_process_group(monkeypatch: Any) -> None:

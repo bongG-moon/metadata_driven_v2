@@ -56,6 +56,12 @@ def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, l
     payload.setdefault("value_type", "string")
     payload.setdefault("value_shape", "scalar")
     payload.setdefault("operator", "eq")
+    if payload.get("required_params") is not None:
+        payload["required_params"] = _as_text_list(payload.get("required_params"))
+    if payload.get("sample_values") is not None:
+        payload["sample_values"] = _as_text_list(payload.get("sample_values"))
+    if not isinstance(payload.get("value_mappings", {}), dict):
+        payload["value_mappings"] = {}
     return {
         "filter_key": filter_key,
         "key": filter_key,
