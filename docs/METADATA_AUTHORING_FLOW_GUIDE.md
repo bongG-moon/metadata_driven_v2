@@ -6,8 +6,11 @@
 > - `langflow_components/table_catalog_authoring_flow/CONNECTION_GUIDE.md`
 > - `langflow_components/main_flow_filters_authoring_flow/CONNECTION_GUIDE.md`
 >
-> 현업 작업자가 그대로 복사해 넣을 수 있는 자연어 입력 예시는
-> `docs/METADATA_TEXT_INPUT_EXAMPLES.md`에 따로 정리되어 있습니다.
+> 현업 작업자가 그대로 복사해 넣을 수 있는 자연어 입력 예시는 각 authoring flow 폴더에 나누어 둡니다.
+>
+> - `langflow_components/domain_authoring_flow/raw_text_input_example.md`
+> - `langflow_components/table_catalog_authoring_flow/raw_text_input_example.md`
+> - `langflow_components/main_flow_filters_authoring_flow/raw_text_input_example.md`
 
 이 문서는 현업 작업자가 코딩이나 Langflow flow 수정을 하지 않고도 자연어 설명으로 `domain`, `table_catalog`, `main_flow_filters` metadata를 MongoDB에 등록할 수 있게 만드는 authoring flow 구현 가이드다.
 
@@ -261,7 +264,7 @@ Langflow 기본 Prompt Template과 Gemini/LLM node를 그대로 사용해도 된
 - `existing_matches`에는 새 item과 관련 있는 기존 항목만 넣는다. 전체 기존 metadata를 그대로 복사하지 않는다.
 - `duplicate_decision.action`은 사용자가 선택한 저장 방식만 담는다. 허용값은 `ask`, `merge`, `replace`, `skip`, `create_new` 정도로 제한한다.
 - 최종 response의 `trace`에는 사용자가 이해할 수 있는 요약만 넣는다.
-- writer는 `review.ready_to_save=true`가 아니면 MongoDB에 쓰지 않는다.
+- writer는 일반적으로 `review.ready_to_save=true`일 때만 MongoDB에 쓴다. 단, `ready_to_save=false`의 원인이 중복 처리 선택뿐이고 `07 ... Review Writer.duplicate_action`이 `merge`, `replace`, `create_new` 중 하나이면 해당 선택으로 중복 blocker를 해소한 뒤 저장할 수 있다.
 
 ## Text Refinement 단계
 
@@ -485,7 +488,7 @@ Review prompt는 중복/유사 항목을 다시 너무 엄격하게 판정하지
 - item이 object가 아니다.
 - 저장 기준 key가 없다.
 - payload가 비어 있거나 실행에 필요한 핵심 정보가 없다.
-- review 결과가 없거나 `ready_to_save=false`다.
+- review 결과가 없거나 `ready_to_save=false`다. 단, 중복 처리 선택만 남은 경우는 `duplicate_action=merge/replace/create_new` override로 저장할 수 있다.
 - Mongo URI, database, collection name이 비어 있다.
 - 보안상 저장하면 안 되는 실제 계정, 비밀번호, token, secret이 포함되어 있다.
 
@@ -527,6 +530,7 @@ Review prompt는 중복/유사 항목을 다시 너무 엄격하게 판정하지
   - `goodocs`: `source_config.doc_id`
 - `required_params`가 있으면 `required_param_mappings`
 - filter를 받을 dataset이면 `filter_mappings`
+- 표준 분석 컬럼명과 실제 조회 컬럼명이 다르면 `standard_column_aliases`
 
 저장 차단 예시:
 
@@ -555,6 +559,20 @@ Review prompt는 중복/유사 항목을 다시 너무 엄격하게 판정하지
 ```
 
 왼쪽 key는 main flow filter 표준명이고, 오른쪽 값만 실제 dataset 컬럼명이다. 따라서 `MODE`가 실제 columns에 없다는 이유로 저장을 막으면 안 된다. `Mode`가 실제 columns에 있는지를 확인해야 한다.
+
+`main_flow_filters`에는 dataset별 mapping을 넣지 않는다. 예를 들어 `MCP_NO` 필터의 후보 컬럼에 `MCPSALENO`가 있을 수는 있지만, `equipment_status`에서 `MCP_NO`가 실제로 `MCPSALENO`로 연결된다는 정보는 `table_catalog.filter_mappings`와 `table_catalog.standard_column_aliases`가 가진다.
+
+실제 row를 pandas 분석에 넘길 때 표준 컬럼명도 같이 필요하면 `standard_column_aliases`를 추가한다:
+
+```json
+{
+  "standard_column_aliases": {
+    "PKG_TYPE1": ["PKG1"],
+    "MCP_NO": ["MCPSALENO"],
+    "OUT_PLAN": ["OUT계획"]
+  }
+}
+```
 
 ### Main Flow Filter
 
@@ -852,7 +870,7 @@ DropdownInput.duplicate_action
 4. Goodocs table catalog에 query_template이 없어도 `doc_id`가 있으면 저장된다.
 5. `filter_mappings`의 왼쪽 key가 실제 columns에 없다는 이유만으로 table catalog 저장을 막지 않는다.
 6. main flow filter에 `filter_key`가 없으면 저장되지 않는다.
-7. review LLM이 `ready_to_save=false`를 반환하면 writer는 MongoDB에 쓰지 않는다.
+7. review LLM이 일반 보충 요청 때문에 `ready_to_save=false`를 반환하면 writer는 MongoDB에 쓰지 않는다.
 8. 같은 key를 다시 등록하면 기본 `merge`로 업데이트된다.
 9. `replace` 모드에서는 기존 문서를 새 문서로 교체한다.
 10. 최종 response에는 저장 여부, 부족 정보, 저장 key가 한국어로 표시된다.

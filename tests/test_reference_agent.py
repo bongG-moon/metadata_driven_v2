@@ -47,12 +47,34 @@ def test_followup_equipment_uses_current_data_product_grain():
     assert second["data"]["row_count"] >= 1
 
 
+def test_followup_equipment_count_uses_equipment_only():
+    first = run_agent("현재 da에서 재공이 가장 많은 제품 알려줘", root=str(ROOT))
+    second = run_agent("이 제품의 이 공정에 할당된 장비 대수를 알려줘", state=first["state"], root=str(ROOT))
+
+    assert second["intent_plan"]["intent_type"] == "followup_transform"
+    assert second["intent_plan"]["analysis_kind"] == "equipment_count_for_previous_products"
+    assert second["applied_scope"]["datasets"] == ["equipment_status"]
+    assert "EQP_COUNT" in second["data"]["columns"]
+    assert second["data"]["rows"][0]["EQP_COUNT"] >= 1
+
+
 def test_lpddr5_wb_production_and_wip_join():
     payload = run_agent("현재 MODE값이 LPDDR5인 제품의 W/B공정에서 생산량과 재공 수량 알려줘", root=str(ROOT))
 
     assert {"production_today", "wip_today"}.issubset(set(payload["applied_scope"]["datasets"]))
     assert {"PRODUCTION", "WIP"}.issubset(set(payload["data"]["columns"]))
     assert payload["data"]["rows"][0]["MODE"] == "LPDDR5"
+
+
+def test_lpddr5_da_production_and_wip_join():
+    payload = run_agent("현재 MODE값이 LPDDR5인 제품의 D/A공정에서 생산량과 재공 수량 알려줘", root=str(ROOT))
+
+    assert payload["intent_plan"]["analysis_kind"] == "aggregate_join"
+    assert {"production_today", "wip_today"}.issubset(set(payload["applied_scope"]["datasets"]))
+    assert {"PRODUCTION", "WIP"}.issubset(set(payload["data"]["columns"]))
+    assert payload["data"]["rows"][0]["MODE"] == "LPDDR5"
+    production_filters = payload["applied_scope"]["filters_by_source"]["lpddr5_da_production_today"]
+    assert any(item["field"] == "OPER_NAME" and "D/A1" in item.get("values", []) for item in production_filters)
 
 
 def test_lot_count_uses_lot_id_nunique_not_quantity_sum():
@@ -62,6 +84,30 @@ def test_lot_count_uses_lot_id_nunique_not_quantity_sum():
     assert payload["applied_scope"]["datasets"] == ["lot_status"]
     assert {"OPER_SHORT_DESC", "LOT_COUNT"}.issubset(set(payload["data"]["columns"]))
     assert payload["analysis"]["analysis_code"].find("nunique") >= 0
+
+
+def test_running_lot_count_uses_running_status():
+    payload = run_agent("현재 작업중 Lot 수량을 공정별로 알려줘", root=str(ROOT))
+
+    assert payload["intent_plan"]["analysis_kind"] == "lot_count_by_process"
+    assert payload["applied_scope"]["datasets"] == ["lot_status"]
+    assert {"OPER_SHORT_DESC", "LOT_COUNT"}.issubset(set(payload["data"]["columns"]))
+    filters = payload["applied_scope"]["filters_by_source"]["lot_count_by_process"]
+    assert filters == [{"field": "LOT_STAT_CD", "op": "eq", "value": "RUNNING"}]
+
+
+def test_wb_lot_wafer_die_summary_uses_lot_status():
+    payload = run_agent(
+        "현재 W/B공정에서 재공 lot이 몇개인지, wafer가 몇개인지, die수량은 몇개인지 알려줘",
+        root=str(ROOT),
+    )
+
+    assert payload["intent_plan"]["analysis_kind"] == "lot_quantity_summary"
+    assert payload["applied_scope"]["datasets"] == ["lot_status"]
+    assert {"SCOPE", "LOT_COUNT", "WF_QTY", "DIE_QTY"}.issubset(set(payload["data"]["columns"]))
+    assert payload["data"]["rows"][0]["SCOPE"] == "WB"
+    filters = payload["applied_scope"]["filters_by_source"]["wb_lot_quantity_summary"]
+    assert any(item["field"] == "OPER_NAME" and "W/B1" in item.get("values", []) for item in filters)
 
 
 def test_low_output_vs_target_has_balance_and_flag():

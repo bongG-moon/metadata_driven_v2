@@ -28,6 +28,7 @@ SUPPORTED_ANALYSIS_KINDS = [
     "detail_rows",
     "rank_top_n",
     "equipment_for_previous_products",
+    "equipment_count_for_previous_products",
     "aggregate_join",
     "production_wip_target_rate",
     "low_output_vs_target",
@@ -291,16 +292,21 @@ def build_intent_prompt(question: str, metadata: dict[str, Any], state: dict[str
             "- Use intent_type=multi_step_analysis when one step creates keys that the next step must reuse.",
             "- If analysis_kind=rank_wip_then_join_production, intent_type must be multi_step_analysis.",
             "- Use intent_type=followup_transform when the question says 이 제품/그 제품/해당 제품 and needs previous state.",
+            "- For follow-up equipment questions, use only equipment_status unless the user explicitly asks for Lot, Hold, wafer, or die data.",
+            "- For follow-up 장비 현황/설비 현황 questions, use analysis_kind=equipment_for_previous_products and return equipment detail rows.",
+            "- For follow-up 장비 대수/설비 대수/몇 대 questions, use analysis_kind=equipment_count_for_previous_products and calculate EQP_COUNT as EQPID.nunique().",
             "- Use current-day datasets production_today and wip_today for 오늘/현재 unless the question asks 어제/history.",
             "- Use target for 목표/계획. target DATE format is YYYY-MM-DD.",
             "- For 작업대기 Lot 수량 use lot_status, LOT_STAT_CD=WAITING, and LOT_ID nunique.",
+            "- For 작업중 Lot 수량 use lot_status, LOT_STAT_CD=RUNNING, and LOT_ID nunique.",
             "- For HOLD history of a specific lot use hold_history with LOT_ID.",
             "- For this product/that product follow-up equipment questions, set depends_on_state=true and use equipment_status.",
             "- For DA/WB each top WIP then production, express rank first and dependent production join steps.",
             "- If a question asks 재공 + 생산량 + 목표값/계획 + 달성율, set analysis_kind=production_wip_target_rate.",
             "- If a question asks 목표값 대비/계획 대비/INPUT계획대비 and low/저조 production, set analysis_kind=low_output_vs_target.",
             "- For INPUT계획대비, set target_column=INPUT_PLAN but keep analysis_kind=low_output_vs_target.",
-            "- If a question asks lot count plus wafer count plus die quantity, set analysis_kind=lot_quantity_summary, not aggregate_join.",
+            "- If a question asks lot count plus wafer count plus die quantity for DA/WB or another process group, use lot_status with process filters and set analysis_kind=lot_quantity_summary, not aggregate_join.",
+            "- If a question asks LPDDR5 or another product condition plus DA/WB production and WIP together, use production_today and wip_today with process filters and set analysis_kind=aggregate_join.",
             "- If a question asks only total/overall/current WIP or 재공 수량, set analysis_kind=aggregate_wip_total and use only wip_today.",
             "- If a question asks today's total production/wip/target values without product or process group-by, set analysis_kind=overall_production_wip_target.",
             "- Use overall_production_wip_target only when production, WIP, and target/plan are all requested together.",
@@ -445,6 +451,8 @@ def analysis_instruction(plan: dict[str, Any]) -> str:
         return f"Aggregate the metric in step_plan[0].metric by product_grain {product_keys}, rank descending, keep top_n."
     if kind == "equipment_for_previous_products":
         return "Filter equipment rows by plan.state_product_keys using product_grain, then return equipment detail columns."
+    if kind == "equipment_count_for_previous_products":
+        return "Filter equipment rows by plan.state_product_keys using product_grain, then calculate EQP_COUNT as EQPID.nunique()."
     if kind == "aggregate_join":
         return "Aggregate PRODUCTION and WIP by product_grain from their source aliases, then outer join by product_grain."
     if kind == "production_wip_target_rate":
@@ -622,6 +630,8 @@ def preferred_columns(plan: dict[str, Any]) -> list[str]:
         return [*product_keys, "PRODUCTION", "OUT_PLAN", "BALANCE"]
     if kind == "equipment_by_model":
         return ["EQP_MODEL", "EQP_COUNT", "PRESS_CNT"]
+    if kind == "equipment_count_for_previous_products":
+        return [*product_keys, "EQP_COUNT"]
     return []
 
 

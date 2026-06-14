@@ -29,8 +29,8 @@ def review_and_write_main_flow_filter_payload(
     duplicate_action: str = "",
 ) -> dict[str, Any]:
     payload = _payload(payload_value)
-    review = _normalize_review(_text(llm_response_value), payload)
     action = _action_from_override(duplicate_action, payload)
+    review = _normalize_review(_text(llm_response_value), payload, action)
     config = payload.get("mongo_config") if isinstance(payload.get("mongo_config"), dict) else {}
     database = _clean(mongo_database or config.get("database") or os.getenv("MONGODB_DATABASE") or "metadata_driven_agent_v2")
     collection = _resolve_collection_name(collection_name or config.get("collection"), collection_prefix or config.get("collection_prefix"))
@@ -50,16 +50,24 @@ def review_and_write_main_flow_filter_payload(
         write_result = _write_items(uri, database, collection, payload.get("items", []), action)
 
     next_payload = dict(payload)
+    next_payload["duplicate_decision"] = _resolved_duplicate_decision(payload, action)
     next_payload["review"] = review
     next_payload["write_result"] = write_result
     next_payload.setdefault("trace", {})["reviewed_at"] = datetime.now(timezone.utc).isoformat()
     return next_payload
 
 
-def _normalize_review(text: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _normalize_review(text: str, payload: dict[str, Any], action: str = "ask") -> dict[str, Any]:
     parsed = _extract_json_object(text)
-    supplement = _as_list(parsed.get("supplement_requests"))
-    if (payload.get("duplicate_decision") or {}).get("requires_user_choice"):
+    duplicate_resolved = _duplicate_choice_required(payload) and action in {"merge", "replace", "create_new"}
+    supplement = []
+    duplicate_supplement_count = 0
+    for item in _as_list(parsed.get("supplement_requests")):
+        if duplicate_resolved and _is_duplicate_action_request(item):
+            duplicate_supplement_count += 1
+            continue
+        supplement.append(item)
+    if _duplicate_choice_required(payload) and action == "ask":
         supplement.append(
             {
                 "field": "duplicate_action",
@@ -70,7 +78,8 @@ def _normalize_review(text: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not payload.get("items"):
         supplement.append({"field": "items", "reason": "저장할 filter item이 없습니다.", "example_user_input": "추가할 필터명, 컬럼 후보, 값 형태를 설명해 주세요."})
     errors = list(payload.get("errors", []))
-    ready = bool(parsed.get("ready_to_save", False)) and not supplement and not errors
+    only_duplicate_blockers = duplicate_resolved and duplicate_supplement_count > 0 and not supplement
+    ready = (bool(parsed.get("ready_to_save", False)) or only_duplicate_blockers) and not supplement and not errors
     return {
         "ready_to_save": ready,
         "summary": _clean(parsed.get("summary") or "검증 결과를 정리했습니다."),
@@ -184,6 +193,30 @@ def _as_list(value: Any) -> list[Any]:
 def _action(value: Any) -> str:
     action = _clean(value).lower()
     return action if action in {"ask", "merge", "replace", "skip", "create_new"} else "ask"
+
+
+def _duplicate_choice_required(payload: dict[str, Any]) -> bool:
+    return bool((payload.get("duplicate_decision") or {}).get("requires_user_choice"))
+
+
+def _is_duplicate_action_request(item: Any) -> bool:
+    if isinstance(item, dict):
+        if _clean(item.get("field")) == "duplicate_action":
+            return True
+        text = " ".join(_clean(item.get(key)) for key in ("reason", "example_user_input"))
+    else:
+        text = _clean(item)
+    lowered = text.lower()
+    return "duplicate_action" in lowered or "merge" in lowered and "replace" in lowered and "skip" in lowered
+
+
+def _resolved_duplicate_decision(payload: dict[str, Any], action: str) -> dict[str, Any]:
+    decision = deepcopy(payload.get("duplicate_decision")) if isinstance(payload.get("duplicate_decision"), dict) else {}
+    decision["action"] = action
+    if action in {"merge", "replace", "skip", "create_new"}:
+        decision["requires_user_choice"] = False
+        decision["message"] = ""
+    return decision
 
 
 def _action_from_override(value: Any, payload: dict[str, Any]) -> str:

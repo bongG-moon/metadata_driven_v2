@@ -24,6 +24,7 @@ def build_table_catalog_review_prompt_payload(payload_value: Any) -> dict[str, A
             "You review table catalog metadata before MongoDB save.",
             "Return one strict JSON object only. Do not wrap it in markdown.",
             "Be practical, not overly strict. Block only when the dataset cannot be retrieved, required fields are missing, or a duplicate decision is required.",
+            "default_detail_columns is optional. Do not block saving only because default_detail_columns is missing when columns are present.",
             "Explain supplement requests in Korean for a non-technical manufacturing user.",
             "",
             "Review input:",

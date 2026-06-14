@@ -6,7 +6,9 @@
 
 - `docs/METADATA_AUTHORING_FLOW_GUIDE.md`
 - `docs/DATA_RETRIEVAL_SOURCES.md`
-- `docs/METADATA_TEXT_INPUT_EXAMPLES.md`
+- `langflow_components/domain_authoring_flow/raw_text_input_example.md`
+- `langflow_components/table_catalog_authoring_flow/raw_text_input_example.md`
+- `langflow_components/main_flow_filters_authoring_flow/raw_text_input_example.md`
 
 핵심 흐름은 아래 계약을 따릅니다.
 
@@ -105,11 +107,13 @@ Follow-up product context is carried in `state.current_data.product_key_values`,
 python tools\upload_json_to_mongodb.py --dry-run
 ```
 
-현장 작업자가 JSON을 직접 올리는 대신 자연어로 metadata를 등록하는 경우에는 `docs/METADATA_TEXT_INPUT_EXAMPLES.md`의 예시 문장을 authoring flow 입력으로 사용하세요.
+현장 작업자가 JSON을 직접 올리는 대신 자연어로 metadata를 등록하는 경우에는 각 authoring flow 폴더의 `raw_text_input_example.md` 예시 문장을 해당 flow 입력으로 사용하세요.
 
 ## Langflow 연결 문서
 
-- `docs/METADATA_TEXT_INPUT_EXAMPLES.md` - 제조 작업자용 자연어 metadata 입력 예시와 검증 방법
+- `langflow_components/domain_authoring_flow/raw_text_input_example.md` - 업무 용어 metadata 입력 예시
+- `langflow_components/table_catalog_authoring_flow/raw_text_input_example.md` - 데이터셋/table catalog metadata 입력 예시
+- `langflow_components/main_flow_filters_authoring_flow/raw_text_input_example.md` - main flow filter metadata 입력 예시
 - `docs/V2_BASE_COMPLETION_REPORT_20260613.md` - v2 base 보강 내역과 최신 검증 결과
 - `docs/V2_LANGFLOW_CANVAS_WIRING_GUIDE.md` - main flow, retrieval flow, authoring flow의 output/input 연결 전체표
 - `langflow_components/main_flow/CONNECTION_GUIDE.md`

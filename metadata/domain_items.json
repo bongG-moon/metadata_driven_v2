@@ -112,6 +112,14 @@
       "quantity_column": "SUB_PROD_QTY",
       "aggregation": "sum",
       "output_column": "DIE_QTY"
+    },
+    "equipment_count": {
+      "aliases": ["장비 대수", "설비 대수", "장비 수", "설비 수", "장비수", "설비수", "몇 대", "몇대", "EQP_COUNT"],
+      "dataset_key": "equipment_status",
+      "dataset_family": "equipment",
+      "quantity_column": "EQPID",
+      "aggregation": "nunique",
+      "output_column": "EQP_COUNT"
     }
   },
   "metric_terms": {
@@ -222,6 +230,34 @@
         "lot": "lot_data"
       },
       "output_columns": ["LOT_COUNT", "WF_QTY", "DIE_QTY"]
+    },
+    "equipment_for_previous_products": {
+      "display_name": "이전 제품 기준 장비 상세 현황",
+      "aliases": ["장비 현황", "설비 현황", "할당된 장비 현황", "물려 있는 장비", "배정된 장비", "장비 list", "장비 목록"],
+      "question_cues": ["이 제품", "그 제품", "해당 제품", "장비", "설비", "현황"],
+      "intent_type": "followup_transform",
+      "default_analysis_kind": "equipment_for_previous_products",
+      "required_dataset_families": ["equipment"],
+      "grain_policy": "previous_product_grain",
+      "source_aliases_by_family": {
+        "equipment": "equipment_for_previous_products"
+      },
+      "result_mode": "detail_rows",
+      "output_columns": ["EQPID", "EQP_MODEL", "PRESS_CNT", "LOT_ID", "RECIPE_ID"]
+    },
+    "equipment_count_for_previous_products": {
+      "display_name": "이전 제품 기준 장비 대수",
+      "aliases": ["장비 대수", "설비 대수", "장비 수", "설비 수", "몇 대", "몇대", "할당된 장비 대수"],
+      "question_cues": ["이 제품", "그 제품", "해당 제품", "장비", "설비", "대수"],
+      "intent_type": "followup_transform",
+      "default_analysis_kind": "equipment_count_for_previous_products",
+      "required_quantity_terms": ["equipment_count"],
+      "required_dataset_families": ["equipment"],
+      "grain_policy": "previous_product_grain",
+      "source_aliases_by_family": {
+        "equipment": "equipment_for_previous_products"
+      },
+      "output_columns": ["EQP_COUNT"]
     }
   },
   "status_terms": {

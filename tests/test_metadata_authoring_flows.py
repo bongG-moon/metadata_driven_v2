@@ -185,6 +185,8 @@ def test_table_catalog_authoring_normalizes_detail_columns_and_filter_mappings()
                     "date_format": "YYYY-MM-DD",
                     "columns": ["DATE", "MODE", "OUT_PLAN"],
                     "filter_mappings": {"DATE": "DATE", "MODE": ["MODE"]},
+                    "required_param_mappings": {"DATE": "DATE"},
+                    "standard_column_aliases": {"OUT_PLAN": "OUT계획", "PKG_TYPE1": ["PKG1"]},
                     "default_detail_columns": "DATE",
                 },
             }
@@ -198,8 +200,179 @@ def test_table_catalog_authoring_normalizes_detail_columns_and_filter_mappings()
     assert normalized["errors"] == []
     item_payload = normalized["items"][0]["payload"]
     assert item_payload["filter_mappings"] == {"DATE": ["DATE"], "MODE": ["MODE"]}
+    assert item_payload["required_param_mappings"] == {"DATE": ["DATE"]}
+    assert item_payload["standard_column_aliases"] == {"OUT_PLAN": ["OUT계획"], "PKG_TYPE1": ["PKG1"]}
     assert item_payload["default_detail_columns"] == ["DATE"]
     assert item_payload["date_format"] == "YYYY-MM-DD"
+
+
+def test_table_catalog_authoring_backfills_structured_fields_from_raw_text() -> None:
+    normalizer = load_module("langflow_components/table_catalog_authoring_flow/04_table_catalog_authoring_result_normalizer.py")
+    raw_text = """당일용 생산 실적 데이터는 production_today로 등록해줘.
+화면에 보일 이름은 Production Today이면 돼.
+당일 생산 실적 질문에 사용하는 Oracle 데이터야.
+production_today는 production 계열의 당일용 생산 실적 source야.
+조회할 때 DATE 값은 WORK_DT 컬럼에 넣어서 조회하고, DATE는 조회 필수 기준일이야.
+DATE는 YYYYMMDD 형식이야.
+수량은 PRODUCTION 컬럼을 사용하고, 이 값은 생산량이야.
+source는 oracle이고 db_key는 PNT_RPT야.
+
+query_template:
+SELECT WORK_DT, FACTORY, FAMILY, MODE, DEN, TECH, ORG, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, TSV_DIE_TYP, DEVICE, DEVICE_DESC, OPER_NUM, OPER_NAME, OPER_SEQ, PRODUCTION
+FROM PRODUCTION_TODAY
+WHERE 1=1
+AND WORK_DT = {DATE}
+AND PRODUCTION > 0
+
+filter_mappings는 DATE -> WORK_DT, MODE -> MODE, DEN -> DEN, TECH -> TECH, PKG_TYPE1 -> PKG_TYPE1, PKG_TYPE2 -> PKG_TYPE2, LEAD -> LEAD, MCP_NO -> MCP_NO, TSV_DIE_TYP -> TSV_DIE_TYP, DEVICE_DESC -> DEVICE_DESC, OPER_NUM -> OPER_NUM, OPER_NAME -> OPER_NAME로 연결해줘."""
+    payload = {
+        "metadata_type": "table_catalog",
+        "raw_text": raw_text,
+        "refined_text": "Oracle 데이터베이스의 PNT_RPT 스키마에 있는 PRODUCTION_TODAY 테이블에서 당일 생산 실적 데이터를 제공합니다.",
+        "errors": [],
+        "warnings": [],
+    }
+    llm_json = {
+        "items": [
+            {
+                "dataset_key": "production_today_detailed",
+                "payload": {
+                    "display_name": "Production Today (Detailed)",
+                    "dataset_family": "production",
+                    "date_scope": "current_day",
+                    "source_type": "oracle",
+                    "source_config": {"source_type": "oracle", "db_key": "PNT_RPT"},
+                    "required_params": ["DATE"],
+                    "required_param_mappings": {"DATE": ["WORK_DT"]},
+                    "date_format": "YYYYMMDD",
+                    "primary_quantity_column": "PRODUCTION",
+                    "filter_mappings": {"DATE": ["WORK_DT"]},
+                    "columns": ["WORK_DT", "PRODUCTION"],
+                    "standard_column_aliases": {},
+                },
+            }
+        ],
+        "missing_information": [],
+        "warnings": [],
+    }
+
+    normalized = normalizer.normalize_table_catalog_authoring_result(payload, json.dumps(llm_json, ensure_ascii=False))
+
+    assert normalized["errors"] == []
+    item = normalized["items"][0]
+    item_payload = item["payload"]
+    assert item["dataset_key"] == "production_today"
+    assert "FROM PRODUCTION_TODAY" in item_payload["source_config"]["query_template"]
+    assert item_payload["columns"] == [
+        "WORK_DT",
+        "FACTORY",
+        "FAMILY",
+        "MODE",
+        "DEN",
+        "TECH",
+        "ORG",
+        "PKG_TYPE1",
+        "PKG_TYPE2",
+        "LEAD",
+        "MCP_NO",
+        "TSV_DIE_TYP",
+        "DEVICE",
+        "DEVICE_DESC",
+        "OPER_NUM",
+        "OPER_NAME",
+        "OPER_SEQ",
+        "PRODUCTION",
+    ]
+    assert item_payload["filter_mappings"]["OPER_NAME"] == ["OPER_NAME"]
+    assert item_payload["filter_mappings"]["MODE"] == ["MODE"]
+    assert item_payload["required_param_mappings"]["DATE"] == ["WORK_DT"]
+    assert item_payload["date_format"] == "YYYYMMDD"
+    assert item_payload["primary_quantity_column"] == "PRODUCTION"
+
+
+def test_table_catalog_writer_does_not_block_missing_default_detail_columns() -> None:
+    writer = load_module("langflow_components/table_catalog_authoring_flow/07_table_catalog_review_writer.py")
+    payload = {
+        "metadata_type": "table_catalog",
+        "items": [{"dataset_key": "production_today", "payload": {"columns": ["WORK_DT", "PRODUCTION"]}}],
+        "duplicate_decision": {"action": "ask", "requires_user_choice": False},
+        "errors": [],
+    }
+    review_json = {
+        "ready_to_save": True,
+        "supplement_requests": [
+            {
+                "field": "default_detail_columns",
+                "reason": "상세 조회 시 기본적으로 표시될 컬럼에 대한 정보가 누락되었습니다.",
+            }
+        ],
+    }
+
+    result = writer.review_and_write_table_catalog_payload(payload, json.dumps(review_json, ensure_ascii=False), mongo_uri="")
+
+    assert result["review"]["ready_to_save"] is True
+    assert result["review"]["supplement_requests"] == []
+
+
+def test_table_catalog_writer_allows_false_review_without_actionable_blockers() -> None:
+    writer = load_module("langflow_components/table_catalog_authoring_flow/07_table_catalog_review_writer.py")
+    payload = {
+        "metadata_type": "table_catalog",
+        "items": [
+            {
+                "dataset_key": "production_today",
+                "payload": {
+                    "display_name": "Production Today",
+                    "source_type": "oracle",
+                    "source_config": {
+                        "source_type": "oracle",
+                        "db_key": "PNT_RPT",
+                        "query_template": "SELECT WORK_DT, PRODUCTION FROM PRODUCTION_TODAY WHERE WORK_DT = {DATE}",
+                    },
+                    "columns": ["WORK_DT", "PRODUCTION"],
+                    "filter_mappings": {"DATE": ["WORK_DT"]},
+                },
+            }
+        ],
+        "duplicate_decision": {"action": "replace", "requires_user_choice": False},
+        "errors": [],
+    }
+    review_json = {
+        "ready_to_save": False,
+        "supplement_requests": [],
+        "item_reviews": [
+            {
+                "dataset_key": "production_today",
+                "decision": "needs_fix",
+                "reason": "기본 상세 컬럼 정보가 누락되었고 기존 dataset_key가 있습니다.",
+            }
+        ],
+    }
+
+    result = writer.review_and_write_table_catalog_payload(payload, json.dumps(review_json, ensure_ascii=False), mongo_uri="")
+
+    assert result["review"]["ready_to_save"] is True
+    assert result["review"]["supplement_requests"] == []
+    assert result["review"]["item_reviews"][0]["decision"] == "pass"
+    assert result["write_result"]["status"] == "error"
+    assert any("mongo_uri" in item for item in result["write_result"]["errors"])
+
+
+def test_authoring_prompts_include_mapping_and_equipment_contracts() -> None:
+    table_prompt_builder = load_module("langflow_components/table_catalog_authoring_flow/03_table_catalog_authoring_prompt_builder.py")
+    filter_prompt_builder = load_module("langflow_components/main_flow_filters_authoring_flow/03_main_flow_filter_authoring_prompt_builder.py")
+    domain_prompt_builder = load_module("langflow_components/domain_authoring_flow/03_domain_authoring_prompt_builder.py")
+
+    table_prompt = table_prompt_builder.build_table_catalog_authoring_prompt_payload({"raw_text": "equipment_status"})["prompt"]
+    filter_prompt = filter_prompt_builder.build_main_flow_filter_authoring_prompt_payload({"raw_text": "MCP_NO"})["prompt"]
+    domain_prompt = domain_prompt_builder.build_domain_authoring_prompt_payload({"raw_text": "장비 대수"})["prompt"]
+
+    assert "table_catalog.filter_mappings maps those standard keys to this dataset's physical columns" in table_prompt
+    assert "Original user text" in table_prompt
+    assert "standard_column_aliases" in table_prompt
+    assert "dataset-specific mappings such as PKG_TYPE1->PKG1 or MCP_NO->MCPSALENO belong in table_catalog.filter_mappings" in filter_prompt
+    assert "EQP_COUNT" in domain_prompt
+    assert "result_mode='detail_rows'" in domain_prompt
 
 
 def test_main_flow_filter_authoring_detects_alias_overlap() -> None:

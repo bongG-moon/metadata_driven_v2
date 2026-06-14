@@ -15,6 +15,8 @@ def run_analysis(plan: dict[str, Any], runtime_sources: dict[str, list[dict[str,
         return _rank_top_n(plan, runtime_sources)
     if analysis_kind == "equipment_for_previous_products":
         return _equipment_for_previous_products(plan, runtime_sources)
+    if analysis_kind == "equipment_count_for_previous_products":
+        return _equipment_count_for_previous_products(plan, runtime_sources)
     if analysis_kind == "aggregate_join":
         return _aggregate_join(plan, runtime_sources)
     if analysis_kind == "production_wip_target_rate":
@@ -34,6 +36,24 @@ def run_analysis(plan: dict[str, Any], runtime_sources: dict[str, list[dict[str,
     if analysis_kind == "equipment_by_model":
         return _equipment_by_model(plan, runtime_sources)
     return _empty_result(plan, f"Unsupported analysis_kind: {analysis_kind}")
+
+
+def _rows_for_dataset(
+    plan: dict[str, Any],
+    runtime_sources: dict[str, list[dict[str, Any]]],
+    dataset_key: str,
+    fallback_aliases: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    for job in plan.get("retrieval_jobs", []):
+        if not isinstance(job, dict) or str(job.get("dataset_key") or "") != dataset_key:
+            continue
+        alias = str(job.get("source_alias") or "")
+        if alias in runtime_sources:
+            return runtime_sources.get(alias, [])
+    for alias in fallback_aliases:
+        if alias in runtime_sources:
+            return runtime_sources.get(alias, [])
+    return []
 
 
 def _rank_wip_then_join_production(
@@ -130,10 +150,39 @@ def _equipment_for_previous_products(
     )
 
 
+def _equipment_count_for_previous_products(
+    plan: dict[str, Any],
+    runtime_sources: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    product_keys = plan["product_grain"]
+    source_alias = plan["retrieval_jobs"][0]["source_alias"]
+    frame = pd.DataFrame(runtime_sources.get(source_alias, []))
+    if frame.empty:
+        return _empty_result(plan, "No equipment rows found")
+    product_tuples = plan.get("state_product_keys", [])
+    if product_tuples:
+        allowed = {tuple(item.get(key) for key in product_keys) for item in product_tuples}
+        mask = frame.apply(lambda row: tuple(row.get(key) for key in product_keys) in allowed, axis=1)
+        frame = frame[mask].copy()
+    if frame.empty:
+        return _empty_result(plan, "No equipment rows matched previous product keys")
+    if product_keys:
+        result = frame.groupby(product_keys, dropna=False)["EQPID"].nunique().reset_index(name="EQP_COUNT")
+    else:
+        result = pd.DataFrame([{"EQP_COUNT": int(frame["EQPID"].nunique())}])
+    return _result(
+        plan,
+        result[[*product_keys, "EQP_COUNT"]],
+        analysis_code="read previous product grain from state -> filter equipment rows -> EQP_COUNT = EQPID.nunique()",
+    )
+
+
 def _aggregate_join(plan: dict[str, Any], runtime_sources: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     product_keys = plan["product_grain"]
-    prod = _sum_by(pd.DataFrame(runtime_sources.get("lpddr5_wb_production_today", [])), product_keys, "PRODUCTION")
-    wip = _sum_by(pd.DataFrame(runtime_sources.get("lpddr5_wb_wip_today", [])), product_keys, "WIP")
+    prod_rows = _rows_for_dataset(plan, runtime_sources, "production_today", ("lpddr5_wb_production_today",))
+    wip_rows = _rows_for_dataset(plan, runtime_sources, "wip_today", ("lpddr5_wb_wip_today",))
+    prod = _sum_by(pd.DataFrame(prod_rows), product_keys, "PRODUCTION")
+    wip = _sum_by(pd.DataFrame(wip_rows), product_keys, "WIP")
     final = prod.merge(wip, on=product_keys, how="outer").fillna({"PRODUCTION": 0, "WIP": 0})
     final["PRODUCTION"] = final["PRODUCTION"].astype(int)
     final["WIP"] = final["WIP"].astype(int)
@@ -190,11 +239,12 @@ def _lot_quantity_summary(plan: dict[str, Any], runtime_sources: dict[str, list[
     step = plan["step_plan"][0]
     frame = pd.DataFrame(runtime_sources.get(step["source_alias"], []))
     if frame.empty:
-        return _empty_result(plan, "No DA lot rows found")
+        return _empty_result(plan, "No lot rows found")
+    scope_label = str(plan.get("scope_label") or "PROCESS")
     result = pd.DataFrame(
         [
             {
-                "SCOPE": "DA",
+                "SCOPE": scope_label,
                 "LOT_COUNT": int(frame["LOT_ID"].nunique()),
                 "WF_QTY": int(pd.to_numeric(frame["WF_QTY"], errors="coerce").fillna(0).sum()),
                 "DIE_QTY": int(pd.to_numeric(frame["SUB_PROD_QTY"], errors="coerce").fillna(0).sum()),

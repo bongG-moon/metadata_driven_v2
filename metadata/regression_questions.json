@@ -53,8 +53,27 @@
     "expected_filter_fields": ["PRODUCT_GRAIN"]
   },
   {
+    "id": "followup_equipment_count_for_product",
+    "question": "이 제품의 이 공정에 할당된 장비 대수를 알려줘",
+    "requires_state_from": "da_wip_top_product",
+    "expected_intent_type": "followup_transform",
+    "expected_analysis_kind": "equipment_count_for_previous_products",
+    "expected_datasets": ["equipment_status"],
+    "expected_columns": ["EQP_COUNT"],
+    "expected_filter_fields": ["PRODUCT_GRAIN"]
+  },
+  {
     "id": "lpddr5_wb_production_and_wip",
     "question": "현재 MODE값이 LPDDR5인 제품의 W/B공정에서 생산량과 재공 수량 알려줘",
+    "expected_intent_type": "multi_source_analysis",
+    "expected_analysis_kind": "aggregate_join",
+    "expected_datasets": ["production_today", "wip_today"],
+    "expected_columns": ["PRODUCTION", "WIP"],
+    "expected_filter_fields": ["MODE", "OPER_NAME"]
+  },
+  {
+    "id": "lpddr5_da_production_and_wip",
+    "question": "현재 MODE값이 LPDDR5인 제품의 D/A공정에서 생산량과 재공 수량 알려줘",
     "expected_intent_type": "multi_source_analysis",
     "expected_analysis_kind": "aggregate_join",
     "expected_datasets": ["production_today", "wip_today"],
@@ -98,8 +117,26 @@
     "expected_filter_fields": ["LOT_STAT_CD"]
   },
   {
+    "id": "running_lot_count_by_process",
+    "question": "현재 작업중 Lot 수량을 공정별로 알려줘",
+    "expected_intent_type": "single_retrieval_analysis",
+    "expected_analysis_kind": "lot_count_by_process",
+    "expected_datasets": ["lot_status"],
+    "expected_columns": ["OPER_SHORT_DESC", "LOT_COUNT"],
+    "expected_filter_fields": ["LOT_STAT_CD"]
+  },
+  {
     "id": "da_lot_wafer_die_summary",
     "question": "현재 DA공정에서 재공 lot이 몇개인지, wafer가 몇개인지, die수량은 몇개인지 알려줘",
+    "expected_intent_type": "single_retrieval_analysis",
+    "expected_analysis_kind": "lot_quantity_summary",
+    "expected_datasets": ["lot_status"],
+    "expected_columns": ["LOT_COUNT", "WF_QTY", "DIE_QTY"],
+    "expected_filter_fields": ["OPER_NAME"]
+  },
+  {
+    "id": "wb_lot_wafer_die_summary",
+    "question": "현재 W/B공정에서 재공 lot이 몇개인지, wafer가 몇개인지, die수량은 몇개인지 알려줘",
     "expected_intent_type": "single_retrieval_analysis",
     "expected_analysis_kind": "lot_quantity_summary",
     "expected_datasets": ["lot_status"],

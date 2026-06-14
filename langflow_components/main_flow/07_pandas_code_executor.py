@@ -244,6 +244,8 @@ def _preferred_columns(plan: dict[str, Any]) -> list[str]:
         return [*product_keys, "PRODUCTION", "OUT_PLAN", "BALANCE"]
     if kind == "equipment_by_model":
         return ["EQP_MODEL", "EQP_COUNT", "PRESS_CNT"]
+    if kind == "equipment_count_for_previous_products":
+        return [*product_keys, "EQP_COUNT"]
     return []
 
 

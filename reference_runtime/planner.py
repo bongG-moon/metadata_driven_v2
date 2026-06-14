@@ -41,7 +41,10 @@ def build_intent_plan(
     if _is_waiting_lot_count_question(question):
         return _plan_lot_count_by_process(question, metadata, status_code="WAITING")
 
-    if _is_da_lot_wafer_die_question(question):
+    if _is_running_lot_count_question(question):
+        return _plan_lot_count_by_process(question, metadata, status_code="RUNNING")
+
+    if _is_process_lot_wafer_die_question(question):
         return _plan_lot_quantity_summary(question, metadata)
 
     if _is_followup_equipment_question(question):
@@ -56,8 +59,8 @@ def build_intent_plan(
     if _is_low_output_question(question):
         return _plan_low_output_vs_target(question, metadata, date_value, product_keys)
 
-    if "LPDDR5" in q_upper and _mentions_wb(question) and ("생산" in question or "PRODUCTION" in q_upper):
-        return _plan_lpddr5_wb_production_wip(question, metadata, date_value, product_keys)
+    if "LPDDR5" in q_upper and _mentions_process_group(question) and ("생산" in question or "PRODUCTION" in q_upper):
+        return _plan_lpddr5_process_production_wip(question, metadata, date_value, product_keys)
 
     if ("목표" in question or "달성" in question) and (_mentions_da(question) or _mentions_wb(question)):
         return _plan_production_wip_target_rate(question, metadata, date_value, product_keys)
@@ -296,10 +299,13 @@ def _plan_lot_count_by_process(question: str, metadata: dict[str, Any], status_c
 
 
 def _plan_lot_quantity_summary(question: str, metadata: dict[str, Any]) -> dict[str, Any]:
-    da_processes = _process_values(metadata, "DA", question)
+    process_key = _process_group_key(question) or "DA"
+    processes = _process_values(metadata, process_key, question)
+    source_alias = f"{process_key.lower()}_lot_quantity_summary"
     plan = _base_plan(question, "single_retrieval_analysis", "lot_quantity_summary")
     plan.update(
         {
+            "scope_label": process_key,
             "requested_measures": [
                 {"metric": "LOT_COUNT", "dataset_key": "lot_status", "aggregation": "nunique", "quantity_column": "LOT_ID"},
                 {"metric": "WF_QTY", "dataset_key": "lot_status", "aggregation": "sum"},
@@ -307,11 +313,11 @@ def _plan_lot_quantity_summary(question: str, metadata: dict[str, Any]) -> dict[
             ],
             "retrieval_jobs": [
                 {
-                    "job_id": "job_da_lot_quantity_summary",
-                    "source_alias": "da_lot_quantity_summary",
+                    "job_id": f"job_{source_alias}",
+                    "source_alias": source_alias,
                     "dataset_key": "lot_status",
                     "params": {},
-                    "filters": [{"field": "OPER_NAME", "op": "in", "values": da_processes}],
+                    "filters": [{"field": "OPER_NAME", "op": "in", "values": processes}],
                     "required_columns": ["LOT_ID", "OPER_SHORT_DESC", "SUB_PROD_QTY", "WF_QTY", "LOT_STAT_CD", "LOT_HOLD_STAT_CD"],
                     "purpose": "lot_quantity_summary",
                 }
@@ -320,7 +326,7 @@ def _plan_lot_quantity_summary(question: str, metadata: dict[str, Any]) -> dict[
                 {
                     "step_id": "summarize_lot_wafer_die",
                     "operation": "aggregate_lot_wafer_die",
-                    "source_alias": "da_lot_quantity_summary",
+                    "source_alias": source_alias,
                     "quantity_column": "LOT_ID",
                     "output_ref": "final_result",
                 }
@@ -338,12 +344,21 @@ def _plan_equipment_followup(
 ) -> dict[str, Any]:
     previous_rows = _previous_current_rows(state)
     product_tuples = _extract_product_tuples(previous_rows, product_keys)
-    plan = _base_plan(question, "followup_transform", "equipment_for_previous_products")
+    count_requested = _is_equipment_count_question(question)
+    analysis_kind = "equipment_count_for_previous_products" if count_requested else "equipment_for_previous_products"
+    requested_measures = (
+        [{"metric": "EQP_COUNT", "dataset_key": "equipment_status", "aggregation": "nunique", "quantity_column": "EQPID"}]
+        if count_requested
+        else [{"metric": "PRESS_CNT", "dataset_key": "equipment_status", "aggregation": "detail"}]
+    )
+    required_columns = ["EQPID", *product_keys] if count_requested else ["EQPID", "EQP_MODEL", "PRESS_CNT", *product_keys, "LOT_ID", "RECIPE_ID"]
+    output_columns = [*product_keys, "EQP_COUNT"] if count_requested else ["EQPID", "EQP_MODEL", "PRESS_CNT", *product_keys, "LOT_ID", "RECIPE_ID"]
+    plan = _base_plan(question, "followup_transform", analysis_kind)
     plan.update(
         {
             "product_grain": product_keys,
             "state_product_keys": product_tuples,
-            "requested_measures": [{"metric": "PRESS_CNT", "dataset_key": "equipment_status", "aggregation": "detail"}],
+            "requested_measures": requested_measures,
             "retrieval_jobs": [
                 {
                     "job_id": "job_equipment_for_previous_products",
@@ -351,8 +366,8 @@ def _plan_equipment_followup(
                     "dataset_key": "equipment_status",
                     "params": {},
                     "filters": [{"field": "PRODUCT_GRAIN", "op": "tuple_in", "values": product_tuples}],
-                    "required_columns": ["EQPID", "EQP_MODEL", "PRESS_CNT", *product_keys, "LOT_ID", "RECIPE_ID"],
-                    "purpose": "followup_detail_rows",
+                    "required_columns": required_columns,
+                    "purpose": "followup_equipment_count" if count_requested else "followup_detail_rows",
                 }
             ],
             "step_plan": [
@@ -363,11 +378,11 @@ def _plan_equipment_followup(
                     "output_ref": "previous_product_keys",
                 },
                 {
-                    "step_id": "filter_equipment_by_previous_products",
-                    "operation": "detail_rows_for_product_keys",
+                    "step_id": "count_equipment_for_previous_products" if count_requested else "filter_equipment_by_previous_products",
+                    "operation": "equipment_count_for_previous_products" if count_requested else "detail_rows_for_product_keys",
                     "source_alias": "equipment_for_previous_products",
                     "depends_on": "load_previous_product_keys",
-                    "columns": ["EQPID", "EQP_MODEL", "PRESS_CNT", *product_keys, "LOT_ID", "RECIPE_ID"],
+                    "columns": output_columns,
                     "output_ref": "final_result",
                 },
             ],
@@ -408,16 +423,18 @@ def _plan_hbm_equipment_by_model(question: str, product_keys: list[str]) -> dict
     return plan
 
 
-def _plan_lpddr5_wb_production_wip(
+def _plan_lpddr5_process_production_wip(
     question: str,
     metadata: dict[str, Any],
     date_value: str,
     product_keys: list[str],
 ) -> dict[str, Any]:
-    wb_processes = _process_values(metadata, "WB", question)
+    process_key = _process_group_key(question) or "WB"
+    processes = _process_values(metadata, process_key, question)
+    source_prefix = f"lpddr5_{process_key.lower()}"
     common_filters = [
         {"field": "MODE", "op": "eq", "value": "LPDDR5"},
-        {"field": "OPER_NAME", "op": "in", "values": wb_processes},
+        {"field": "OPER_NAME", "op": "in", "values": processes},
     ]
     plan = _base_plan(question, "multi_source_analysis", "aggregate_join")
     plan.update(
@@ -430,8 +447,8 @@ def _plan_lpddr5_wb_production_wip(
             ],
             "retrieval_jobs": [
                 {
-                    "job_id": "job_lpddr5_wb_production",
-                    "source_alias": "lpddr5_wb_production_today",
+                    "job_id": f"job_{source_prefix}_production",
+                    "source_alias": f"{source_prefix}_production_today",
                     "dataset_key": "production_today",
                     "params": {"DATE": date_value},
                     "filters": deepcopy(common_filters),
@@ -439,8 +456,8 @@ def _plan_lpddr5_wb_production_wip(
                     "purpose": "measure_source",
                 },
                 {
-                    "job_id": "job_lpddr5_wb_wip",
-                    "source_alias": "lpddr5_wb_wip_today",
+                    "job_id": f"job_{source_prefix}_wip",
+                    "source_alias": f"{source_prefix}_wip_today",
                     "dataset_key": "wip_today",
                     "params": {"DATE": date_value},
                     "filters": deepcopy(common_filters),
@@ -450,17 +467,17 @@ def _plan_lpddr5_wb_production_wip(
             ],
             "step_plan": [
                 {
-                    "step_id": "aggregate_lpddr5_wb_production",
+                    "step_id": f"aggregate_{source_prefix}_production",
                     "operation": "aggregate",
-                    "source_alias": "lpddr5_wb_production_today",
+                    "source_alias": f"{source_prefix}_production_today",
                     "metric": "PRODUCTION",
                     "group_by": product_keys,
                     "output_ref": "production_by_product",
                 },
                 {
-                    "step_id": "aggregate_lpddr5_wb_wip",
+                    "step_id": f"aggregate_{source_prefix}_wip",
                     "operation": "aggregate",
-                    "source_alias": "lpddr5_wb_wip_today",
+                    "source_alias": f"{source_prefix}_wip_today",
                     "metric": "WIP",
                     "group_by": product_keys,
                     "output_ref": "wip_by_product",
@@ -468,7 +485,7 @@ def _plan_lpddr5_wb_production_wip(
                 {
                     "step_id": "join_production_and_wip",
                     "operation": "join_previous_steps",
-                    "depends_on": ["aggregate_lpddr5_wb_production", "aggregate_lpddr5_wb_wip"],
+                    "depends_on": [f"aggregate_{source_prefix}_production", f"aggregate_{source_prefix}_wip"],
                     "join_keys": product_keys,
                     "output_ref": "final_result",
                 },
@@ -791,6 +808,18 @@ def _mentions_wb(question: str) -> bool:
     return "WB" in q_upper or "W/B" in q_upper
 
 
+def _process_group_key(question: str) -> str:
+    if _mentions_da(question):
+        return "DA"
+    if _mentions_wb(question):
+        return "WB"
+    return ""
+
+
+def _mentions_process_group(question: str) -> bool:
+    return bool(_process_group_key(question))
+
+
 def _is_followup_equipment_question(question: str) -> bool:
     q_upper = question.upper()
     return ("이 제품" in question or "해당 제품" in question or "THIS PRODUCT" in q_upper) and (
@@ -798,12 +827,36 @@ def _is_followup_equipment_question(question: str) -> bool:
     )
 
 
+def _is_equipment_count_question(question: str) -> bool:
+    q_upper = question.upper()
+    return (
+        "장비 대수" in question
+        or "설비 대수" in question
+        or "장비 수" in question
+        or "설비 수" in question
+        or "장비수" in question
+        or "설비수" in question
+        or "몇 대" in question
+        or "몇대" in question
+        or "EQP_COUNT" in q_upper
+        or "EQUIPMENT COUNT" in q_upper
+    )
+
+
 def _is_waiting_lot_count_question(question: str) -> bool:
     return "작업대기" in question and "LOT" in question.upper() and ("수량" in question or "몇" in question)
 
 
-def _is_da_lot_wafer_die_question(question: str) -> bool:
-    return _mentions_da(question) and "LOT" in question.upper() and "WAFER" in question.upper() and ("DIE" in question.upper() or "die" in question)
+def _is_running_lot_count_question(question: str) -> bool:
+    q_upper = question.upper()
+    return ("작업중" in question or "작업 중" in question or "RUNNING" in q_upper) and "LOT" in q_upper and (
+        "수량" in question or "몇" in question
+    )
+
+
+def _is_process_lot_wafer_die_question(question: str) -> bool:
+    q_upper = question.upper()
+    return _mentions_process_group(question) and "LOT" in q_upper and "WAFER" in q_upper and "DIE" in q_upper
 
 
 def _is_hbm_equipment_question(question: str) -> bool:

@@ -9,7 +9,12 @@ These standalone files mirror the existing four-source retrieval pattern:
 - `01_dummy_data_retriever.py`: all-purpose local dummy source
 - `06_source_retrieval_merger.py`: merges source-specific payloads
 
-The current implementation returns deterministic dummy rows when live credentials are empty. This keeps Langflow wiring and pandas validation close to the real source split without requiring Oracle, H-API, Datalake, or Goodocs access on a developer machine.
+The current implementation returns deterministic dummy rows when live credentials are empty. When credentials are provided, the source retrievers execute the metadata-backed live branch:
+
+- Oracle renders `source_config.query_template` with job `params` and executes it through `oracledb`.
+- H-API sends `{"bindParams": [...]}` to `source_config.api_url` and extracts rows from `response_path` when configured.
+- Datalake uses the LakeHouse runtime path: set `LAKEHOUSE_*` environment values, run `lakes.LakeHouse(...).ensure_running(...)`, execute SQL with `auto_run_sync_paragraph`, then read `get_rst()`.
+- Goodocs loads the configured document through a `Goodocs` adapter/module and applies metadata filters such as `DATE`.
 
 ## How To Connect
 
@@ -47,3 +52,14 @@ Connect the same `04 Intent Plan Normalizer.payload_out` to all four source retr
 05 Retrieval Payload Adapter.payload -> 06 Pandas Prompt Builder.payload
 05 Retrieval Payload Adapter.payload -> 07 Pandas Code Executor.payload
 ```
+
+## Live Inputs
+
+| Node | Inputs for live retrieval |
+| --- | --- |
+| `02 Oracle Query Retriever` | `oracle_config`, `fetch_limit` |
+| `03 H-API Retriever` | `api_token`, `fetch_limit` |
+| `04 Datalake Retriever` | `lakehouse_user_id`, `lakehouse_token`, `lakehouse_s3_access_key`, `lakehouse_s3_secret_key`, `fetch_limit` |
+| `05 Goodocs Retriever` | `user_id`, `token_source`, `token_key`, optional `goodocs_module_name`, `fetch_limit` |
+
+`source_config` comes from table catalog metadata and is attached to each `retrieval_jobs[]` item by the main flow normalizer. Credentials stay in Langflow node inputs or environment variables, not in metadata.

@@ -84,6 +84,11 @@ def _analysis_instruction(plan: dict[str, Any]) -> str:
         return f"Aggregate the metric in step_plan[0].metric by product_grain {product_keys}, rank descending, keep top_n."
     if kind == "equipment_for_previous_products":
         return "Filter equipment rows by plan.state_product_keys using product_grain, then return equipment detail columns."
+    if kind == "equipment_count_for_previous_products":
+        return (
+            "Filter equipment rows by plan.state_product_keys using product_grain, then calculate EQP_COUNT as EQPID.nunique(). "
+            f"Return product_grain {product_keys} plus ['EQP_COUNT']; do not use lot_status for this calculation."
+        )
     if kind == "aggregate_join":
         return "Aggregate PRODUCTION and WIP by product_grain from their source aliases, then outer join by product_grain."
     if kind == "production_wip_target_rate":

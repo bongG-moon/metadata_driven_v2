@@ -26,8 +26,10 @@ def normalize_table_catalog_authoring_result(payload_value: Any, llm_response_va
     if not parsed:
         errors.append("저장 형식 변환 LLM 응답에서 JSON을 찾지 못했습니다.")
     raw_items = parsed.get("items") if isinstance(parsed.get("items"), list) else []
+    source_text = _source_text(payload)
+    raw_item_count = len(raw_items)
     for index, raw_item in enumerate(raw_items):
-        item, item_errors = _normalize_item(raw_item, index)
+        item, item_errors = _normalize_item(raw_item, index, source_text, raw_item_count)
         if item:
             items.append(item)
         errors.extend(item_errors)
@@ -43,19 +45,22 @@ def normalize_table_catalog_authoring_result(payload_value: Any, llm_response_va
     return next_payload
 
 
-def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, list[str]]:
+def _normalize_item(raw_item: Any, index: int, source_text: str = "", raw_item_count: int = 0) -> tuple[dict[str, Any] | None, list[str]]:
     errors = []
     if not isinstance(raw_item, dict):
         return None, [f"items[{index}]가 object가 아닙니다."]
     dataset_key = _clean(raw_item.get("dataset_key") or raw_item.get("key"))
     payload = deepcopy(raw_item.get("payload")) if isinstance(raw_item.get("payload"), dict) else {}
+    dataset_key = _backfill_dataset_key(dataset_key, source_text, raw_item_count)
     if not dataset_key:
         errors.append(f"items[{index}] dataset_key가 없습니다.")
-    source_type = _clean(payload.get("source_type") or (payload.get("source_config") or {}).get("source_type") or "dummy").lower()
+    source_type = _clean(payload.get("source_type") or (payload.get("source_config") or {}).get("source_type") or _source_type_from_text(source_text) or "dummy").lower()
     payload["source_type"] = source_type
     source_config = deepcopy(payload.get("source_config")) if isinstance(payload.get("source_config"), dict) else {}
     source_config.setdefault("source_type", source_type)
     payload["source_config"] = source_config
+    if raw_item_count == 1:
+        _backfill_structured_fields(payload, source_text)
     for field in SOURCE_REQUIRED_FIELDS.get(source_type, []):
         if not _clean(source_config.get(field)):
             errors.append(f"{dataset_key} source_type={source_type}에는 source_config.{field}가 필요합니다.")
@@ -63,14 +68,9 @@ def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, l
         errors.append(f"{dataset_key} dataset_family가 필요합니다.")
     if not _as_text_list(payload.get("columns")):
         errors.append(f"{dataset_key} columns 목록이 필요합니다.")
-    if not isinstance(payload.get("filter_mappings"), dict):
-        payload["filter_mappings"] = {}
-    else:
-        payload["filter_mappings"] = {
-            _clean(key): _as_text_list(value)
-            for key, value in payload["filter_mappings"].items()
-            if _clean(key)
-        }
+    payload["filter_mappings"] = _normalize_mapping(payload.get("filter_mappings"))
+    payload["required_param_mappings"] = _normalize_mapping(payload.get("required_param_mappings"))
+    payload["standard_column_aliases"] = _normalize_mapping(payload.get("standard_column_aliases"))
     if not isinstance(payload.get("required_params"), list):
         payload["required_params"] = _as_text_list(payload.get("required_params"))
     if payload.get("default_detail_columns") is not None:
@@ -84,6 +84,190 @@ def _normalize_item(raw_item: Any, index: int) -> tuple[dict[str, Any] | None, l
         "payload": payload,
         "confidence": _clean(raw_item.get("confidence") or "medium"),
     }, errors
+
+
+def _source_text(payload: dict[str, Any]) -> str:
+    parts = [_clean(payload.get("raw_text")), _clean(payload.get("refined_text"))]
+    return "\n\n".join(part for part in parts if part)
+
+
+def _backfill_dataset_key(dataset_key: str, source_text: str, raw_item_count: int) -> str:
+    if raw_item_count != 1:
+        return dataset_key
+    candidates = _unique_text(
+        re.findall(r"\b([A-Za-z][A-Za-z0-9_]*)\s*로\s*등록", source_text)
+        + re.findall(r"데이터는\s*([A-Za-z][A-Za-z0-9_]*)\s*로", source_text)
+    )
+    if len(candidates) != 1:
+        return dataset_key
+    candidate = candidates[0]
+    if not dataset_key or dataset_key.endswith("_detailed") or dataset_key not in source_text:
+        return candidate
+    return dataset_key
+
+
+def _backfill_structured_fields(payload: dict[str, Any], source_text: str) -> None:
+    if not source_text:
+        return
+    source_config = payload.get("source_config") if isinstance(payload.get("source_config"), dict) else {}
+    source_type = _source_type_from_text(source_text)
+    if source_type and not _clean(payload.get("source_type")):
+        payload["source_type"] = source_type
+        source_config["source_type"] = source_type
+    db_key = _db_key_from_text(source_text)
+    if db_key and not _clean(source_config.get("db_key")):
+        source_config["db_key"] = db_key
+    query_template = _query_template_from_text(source_text)
+    if query_template and not _clean(source_config.get("query_template")):
+        source_config["query_template"] = query_template
+    payload["source_config"] = source_config
+
+    query_columns = _columns_from_query(_clean(source_config.get("query_template")))
+    existing_columns = _as_text_list(payload.get("columns"))
+    if query_columns and len(existing_columns) < len(query_columns):
+        payload["columns"] = query_columns
+
+    mappings_from_text = _filter_mappings_from_text(source_text)
+    if mappings_from_text:
+        payload["filter_mappings"] = _merge_mapping(payload.get("filter_mappings"), mappings_from_text)
+        if "DATE" in mappings_from_text:
+            payload["required_param_mappings"] = _merge_mapping(payload.get("required_param_mappings"), {"DATE": mappings_from_text["DATE"]})
+            required_params = _as_text_list(payload.get("required_params"))
+            if "DATE" not in required_params:
+                payload["required_params"] = [*required_params, "DATE"]
+
+    date_format = _date_format_from_text(source_text)
+    if date_format and not _clean(payload.get("date_format")):
+        payload["date_format"] = date_format
+    quantity_column = _quantity_column_from_text(source_text)
+    if quantity_column and not _clean(payload.get("primary_quantity_column")):
+        payload["primary_quantity_column"] = quantity_column
+
+
+def _source_type_from_text(text: str) -> str:
+    lowered = text.lower()
+    for source_type in ("oracle", "datalake", "h_api", "goodocs", "dummy"):
+        if re.search(rf"\b{re.escape(source_type)}\b", lowered):
+            return source_type
+    return ""
+
+
+def _db_key_from_text(text: str) -> str:
+    match = re.search(r"\bdb_key\s*(?:는|:|=)\s*([A-Za-z0-9_.-]+)", text, flags=re.IGNORECASE)
+    return _clean(match.group(1)) if match else ""
+
+
+def _query_template_from_text(text: str) -> str:
+    lines = str(text or "").splitlines()
+    collected: list[str] = []
+    collecting = False
+    for line in lines:
+        if not collecting:
+            match = re.match(r"\s*query_template\s*:\s*(.*)$", line, flags=re.IGNORECASE)
+            if not match:
+                continue
+            collecting = True
+            first = _clean(match.group(1))
+            if first:
+                collected.append(first)
+            continue
+        stripped = _clean(line)
+        if not stripped and collected:
+            break
+        if re.match(r"\s*(filter_mappings|default_detail_columns|columns|standard_column_aliases)\b", line, flags=re.IGNORECASE):
+            break
+        if stripped:
+            collected.append(stripped)
+    return " ".join(collected)
+
+
+def _columns_from_query(query: str) -> list[str]:
+    match = re.search(r"\bselect\b\s+(.*?)\s+\bfrom\b", query, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        return []
+    return _unique_text(_column_name_from_select_expr(part) for part in _split_select_list(match.group(1)))
+
+
+def _split_select_list(select_text: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in select_text:
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        if char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    if current:
+        parts.append("".join(current))
+    return parts
+
+
+def _column_name_from_select_expr(expr: str) -> str:
+    text = _clean(expr).strip('"`[]')
+    alias = re.search(r"\s+as\s+([A-Za-z0-9_\"`\[\] ]+)$", text, flags=re.IGNORECASE)
+    if alias:
+        return _clean(alias.group(1)).strip('"`[]')
+    tokens = text.split()
+    if len(tokens) > 1:
+        return tokens[-1].strip('"`[]')
+    return text.split(".")[-1].strip('"`[]')
+
+
+def _filter_mappings_from_text(text: str) -> dict[str, list[str]]:
+    match = re.search(r"filter_mappings\s*(?:는|:)?\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        return {}
+    snippet = re.split(r"\n\s*\n", match.group(1), maxsplit=1)[0]
+    result: dict[str, list[str]] = {}
+    for item in re.finditer(r"([A-Za-z][A-Za-z0-9_ ]*)\s*->\s*([^,\n]+)", snippet):
+        key = _clean(item.group(1)).replace(" ", "_")
+        values = _mapping_values(item.group(2))
+        if key and values:
+            result[key] = values
+    return result
+
+
+def _mapping_values(text: str) -> list[str]:
+    cleaned = re.sub(r"(?:로|으로)\s*연결.*$", "", _clean(text))
+    parts = re.split(r"\s*(?:또는|혹은|\bor\b)\s*", cleaned, flags=re.IGNORECASE)
+    return _unique_text(part.strip(" .。;") for part in parts)
+
+
+def _date_format_from_text(text: str) -> str:
+    upper = text.upper()
+    if "YYYY-MM-DD" in upper:
+        return "YYYY-MM-DD"
+    if "YYYYMMDD" in upper:
+        return "YYYYMMDD"
+    return ""
+
+
+def _quantity_column_from_text(text: str) -> str:
+    match = re.search(r"(?:수량|quantity).*?([A-Z][A-Z0-9_]+)\s*컬럼", text, flags=re.IGNORECASE)
+    if match:
+        return _clean(match.group(1)).upper()
+    return ""
+
+
+def _merge_mapping(base: Any, incoming: dict[str, list[str]]) -> dict[str, list[str]]:
+    merged = _normalize_mapping(base)
+    for key, values in incoming.items():
+        merged[key] = _unique_text([*merged.get(key, []), *values])
+    return merged
+
+
+def _unique_text(values: Any) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = _clean(value)
+        if text and text not in result:
+            result.append(text)
+    return result
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -121,6 +305,16 @@ def _as_text_list(value: Any) -> list[str]:
         if text and text not in result:
             result.append(text)
     return result
+
+
+def _normalize_mapping(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        _clean(key): _as_text_list(item)
+        for key, item in value.items()
+        if _clean(key)
+    }
 
 
 def _text(value: Any) -> str:

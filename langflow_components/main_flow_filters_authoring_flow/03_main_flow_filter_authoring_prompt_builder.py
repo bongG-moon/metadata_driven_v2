@@ -32,6 +32,8 @@ def build_main_flow_filter_authoring_prompt_payload(payload_value: Any) -> dict[
             "These filters help the main agent map user words to retrieval params, physical columns, and pandas filters.",
             "Use semantic_role consistently because runtime normalization uses it to distinguish date/process/product/status/equipment filters.",
             "Include sample_values or value_mappings when business words differ from stored values.",
+            "Keep this metadata dataset-neutral. main_flow_filters.column_candidates are broad candidate column names only; dataset-specific mappings such as PKG_TYPE1->PKG1 or MCP_NO->MCPSALENO belong in table_catalog.filter_mappings.",
+            "Do not include table_catalog filter_mappings, source_type, query_template, document ID, or DB key in main_flow_filter items.",
             "",
             "Existing filter summary for duplicate awareness:",
             json.dumps(existing_summary, ensure_ascii=False, indent=2),

@@ -76,7 +76,7 @@ def _process_product_rows(date_value: str, quantity_column: str) -> list[dict[st
     rows = []
     for process_index, process in enumerate(PROCESSES, start=1):
         for product_index, product in enumerate(PRODUCTS, start=1):
-            row = {"WORK_DT": date_value, "OPER_NAME": process, "OPER_SHORT_DESC": process, **product}
+            row = {"WORK_DT": date_value, "OPER_NAME": process, "OPER_SHORT_DESC": process, **product, **_physical_product_aliases(product)}
             row[quantity_column] = 1000 + process_index * 310 + product_index * 145
             rows.append(row)
     return rows
@@ -85,7 +85,9 @@ def _process_product_rows(date_value: str, quantity_column: str) -> list[dict[st
 def _target_rows() -> list[dict[str, Any]]:
     rows = []
     for index, product in enumerate(PRODUCTS, start=1):
-        rows.append({"DATE": "2026-06-12", **product, "INPUT_PLAN": 100000 + index * 8500, "OUT_PLAN": 82000 + index * 6200})
+        input_plan = 100000 + index * 8500
+        out_plan = 82000 + index * 6200
+        rows.append({"DATE": "2026-06-12", **product, **_physical_product_aliases(product), "INPUT_PLAN": input_plan, "OUT_PLAN": out_plan, "INPUT계획": input_plan, "OUT계획": out_plan})
     return rows
 
 
@@ -97,28 +99,48 @@ def _hold_rows(lot_id: str) -> list[dict[str, Any]]:
 
 
 def _lot_rows(date_value: str) -> list[dict[str, Any]]:
-    rows = [{"WORK_DT": date_value, "LOT_ID": "T1234567GEN1", "OPER_SHORT_DESC": "D/A1", "LOT_STAT_CD": "RUNNING", "LOT_HOLD_STAT_CD": "HOLD", **PRODUCTS[0], "SUB_PROD_QTY": 1200, "WF_QTY": 25, "IN_TAT": 12.5, "CUM_TAT": 88.0}]
+    rows = [{"WORK_DT": date_value, "LOT_ID": "T1234567GEN1", "OPER_SHORT_DESC": "D/A1", "LOT_STAT_CD": "RUNNING", "LOT_HOLD_STAT_CD": "HOLD", **PRODUCTS[0], **_physical_product_aliases(PRODUCTS[0]), "SUB_PROD_QTY": 1200, "WF_QTY": 25, "IN_TAT": 12.5, "CUM_TAT": 88.0}]
     index = 0
     for process in PROCESSES[:10]:
         for product in PRODUCTS:
             for slot in range(2):
                 index += 1
-                rows.append({"WORK_DT": date_value, "LOT_ID": f"LOT{date_value[-4:]}{index:05d}", "OPER_SHORT_DESC": process, "LOT_STAT_CD": "WAITING" if index % 2 else "RUNNING", "LOT_HOLD_STAT_CD": "HOLD" if index % 7 == 0 else "", **product, "SUB_PROD_QTY": 900 + index * 8, "WF_QTY": 12 + index % 16, "IN_TAT": 2.5 + index % 9, "CUM_TAT": 18.0 + index % 40})
+                rows.append({"WORK_DT": date_value, "LOT_ID": f"LOT{date_value[-4:]}{index:05d}", "OPER_SHORT_DESC": process, "LOT_STAT_CD": "WAITING" if index % 2 else "RUNNING", "LOT_HOLD_STAT_CD": "HOLD" if index % 7 == 0 else "", **product, **_physical_product_aliases(product), "SUB_PROD_QTY": 900 + index * 8, "WF_QTY": 12 + index % 16, "IN_TAT": 2.5 + index % 9, "CUM_TAT": 18.0 + index % 40})
     return rows
 
 
 def _equipment_rows(date_value: str, source_type: str) -> list[dict[str, Any]]:
     rows = []
     for index, product in enumerate(PRODUCTS * 3, start=1):
-        rows.append({"BASE_DT": date_value, "EQPID": f"EQP{1000 + index}", "EQP_ID": f"EQP{1000 + index}", "EQP_MODEL": f"{source_type.upper()}-MODEL-{index % 5}", "PRESS_CNT": 1 + index % 3, "LOT_ID": "T1234567GEN1" if index <= 2 else f"LOT{date_value[-4:]}{index:05d}", "RECIPE_ID": f"R-{product['MODE']}-{index % 4}", **product})
+        rows.append({"BASE_DT": date_value, "EQPID": f"EQP{1000 + index}", "EQP_ID": f"EQP{1000 + index}", "EQP_MODEL": f"{source_type.upper()}-MODEL-{index % 5}", "PRESS_CNT": 1 + index % 3, "LOT_ID": "T1234567GEN1" if index <= 2 else f"LOT{date_value[-4:]}{index:05d}", "RECIPE_ID": f"R-{product['MODE']}-{index % 4}", **product, **_physical_product_aliases(product)})
     return rows
 
 
 def _capacity_rows(date_value: str) -> list[dict[str, Any]]:
     rows = []
     for index, product in enumerate(PRODUCTS * 2, start=1):
-        rows.append({"BASE_DT": date_value, "EQPID": f"EQP{2000 + index}", "EQP_MODEL": f"CAPA-{product['PKG_TYPE1']}-{index % 3}", "RECIPE_ID": f"R-{product['MODE']}-{index % 4}", "AVG_UPH_VAL": 650 + index * 45, "PRESS_CNT": 1 + index % 2, **product})
+        eqp_model = f"CAPA-{product['PKG_TYPE1']}-{index % 3}"
+        rows.append({"BASE_DT": date_value, "EQPID": f"EQP{2000 + index}", "EQP_MODEL": eqp_model, "EQP_MODEL_CD": eqp_model, "RECIPE_ID": f"R-{product['MODE']}-{index % 4}", "AVG_UPH_VAL": 650 + index * 45, "PRESS_CNT": 1 + index % 2, **product, **_physical_product_aliases(product)})
     return rows
+
+
+def _physical_product_aliases(product: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "Mode": product.get("MODE"),
+        "PKG1": product.get("PKG_TYPE1"),
+        "PKG2": product.get("PKG_TYPE2"),
+        "MCP NO": product.get("MCP_NO"),
+        "MCPSALENO": product.get("MCP_NO"),
+        "PROD_TYP": product.get("MODE"),
+        "TECH_NM": product.get("TECH"),
+        "DEN_TYP": product.get("DEN"),
+        "PKG_TYP": product.get("PKG_TYPE1"),
+        "PKG_TYP_2": product.get("PKG_TYPE2"),
+        "PKG_TYP2": product.get("PKG_TYPE2"),
+        "LEAD_CNT": product.get("LEAD"),
+        "PROD_GRP_ID": product.get("MCP_NO"),
+        "MCP_SALE_CD": product.get("MCP_NO"),
+    }
 
 
 def _payload(value: Any) -> dict[str, Any]:

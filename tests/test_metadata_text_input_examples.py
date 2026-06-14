@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,43 +11,26 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-DOMAIN_BULK_TEXT = """업무 용어를 등록할게요.
-DA는 D/A라고도 부르고 실제 공정은 D/A1, D/A2, D/A3, D/A4, D/A5, D/A6입니다.
-WB는 W/B라고도 부르고 실제 공정은 W/B1, W/B2, W/B3, W/B4, W/B5, W/B6입니다.
-DP는 D/P라고도 부르고 실제 공정은 D/P1, D/P2입니다.
-BG는 B/G라고도 부르고 실제 공정은 B/G1, B/G2입니다.
-WSD는 WSD라고 부르고 실제 공정은 WSD1, WSD2입니다.
-DS는 D/S라고도 부르고 실제 공정은 D/S1, D/S2입니다.
-FCB는 FCB라고 부르고 실제 공정은 FCB1, FCB2입니다.
-FCBH는 FCBH라고 부르고 실제 공정은 FCBH1, FCBH2입니다.
-BM은 B/M 또는 비엠이라고도 부르고 실제 공정은 B/M1, B/M2입니다.
-HBM, 3DS, TSV는 TSV_DIE_TYP 값이 있고 비어 있지 않은 제품입니다. equipment 계열 데이터에서는 PKG_TYPE1이 HBM인 제품으로 보면 됩니다.
-LPDDR5는 MODE 값이 LPDDR5인 제품입니다.
-AUTO향은 MCP_NO 값이 있고 마지막 문자가 I, O, N, P, Q, V 중 하나인 제품입니다.
-생산량은 production 계열의 PRODUCTION 합계이고, 재공은 wip 계열의 WIP 합계입니다.
-Wafer 수량은 lot_status의 WF_QTY 합계이고, Die 수량은 lot_status의 SUB_PROD_QTY 합계입니다.
-Lot 수량은 lot_status에서 LOT_ID를 중복 없이 세고 LOT_COUNT로 보여 주세요.
-생산달성률은 생산량 합계 / OUT 계획 합계 * 100이고 생산량과 목표값이 필요하며 결과 컬럼명은 ACHIEVEMENT_RATE입니다.
-목표 미달은 OUT 계획 합계 - 생산량 합계이며 음수면 0이고 생산량과 목표값이 필요하며 결과 컬럼명은 BALANCE입니다.
-동적TAT는 재공 합계 / 생산량 합계이고 재공과 생산량이 필요하며 결과 컬럼명은 DYNAMIC_TAT입니다.
-Hold Lot은 LOT_HOLD_STAT_CD가 HOLD 또는 OnHold인 row 목록입니다.
-작업대기 Lot은 LOT_STAT_CD가 WAITING인 LOT_ID 중복 없는 수량입니다.
-작업중 Lot은 LOT_STAT_CD가 RUNNING인 LOT_ID 중복 없는 수량입니다.
-생산달성율 질문은 생산량, 재공, 목표 데이터가 필요하고 분석 방식은 production_wip_target_rate입니다. 묶는 기준은 질문에서 전체라고 하면 전체 합계, 제품별이라고 하면 제품 기준으로 보면 됩니다.
-생산 저조 질문은 생산량과 목표 데이터가 필요하고 분석 방식은 low_output_vs_target입니다. 묶는 기준은 질문에서 말한 기준을 따릅니다.
-Lot, Wafer, Die 수량 요약 질문은 lot_status 데이터를 사용하고 분석 방식은 lot_quantity_summary입니다.
-제품 식별 컬럼은 TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO입니다."""
+def read_marked_example(relative_path: str, marker: str) -> str:
+    text = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+    pattern = rf"<!--\s*{re.escape(marker)}:start\s*-->(.*?)<!--\s*{re.escape(marker)}:end\s*-->"
+    match = re.search(pattern, text, re.DOTALL)
+    assert match, f"{relative_path} does not contain marked example {marker}"
+    content = match.group(1).strip()
+    fenced = re.fullmatch(r"```(?:text)?\s*\n(.*?)\n```", content, re.DOTALL)
+    return (fenced.group(1) if fenced else content).strip()
 
 
-TABLE_BULK_TEXT = """데이터셋 정보를 등록할게요.
-production_today, production, wip_today, wip, target, lot_status, hold_history, equipment_status, capacity를 등록합니다.
-각 데이터셋의 source, 조회문, 필수 입력값, 필터 매핑, 컬럼은 시스템 담당자에게 받은 값 그대로 사용합니다."""
+DOMAIN_EXAMPLE_PATH = "langflow_components/domain_authoring_flow/raw_text_input_example.md"
+TABLE_EXAMPLE_PATH = "langflow_components/table_catalog_authoring_flow/raw_text_input_example.md"
+FILTER_EXAMPLE_PATH = "langflow_components/main_flow_filters_authoring_flow/raw_text_input_example.md"
 
-
-FILTER_BULK_TEXT = """질문에서 뽑아야 하는 필터 정보를 등록할게요.
-DATE, OPER_NAME, TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, DEVICE_DESC, TSV_DIE_TYP, OPER_NUM,
-LOT_ID, LOT_STAT_CD, LOT_HOLD_STAT_CD, EQP_ID, EQP_MODEL, RECIPE_ID를 등록합니다.
-각 필터에는 작업자가 말하는 표현, 실제 후보 컬럼, 필터 역할을 함께 적습니다."""
+DOMAIN_BULK_TEXT = read_marked_example(DOMAIN_EXAMPLE_PATH, "bulk_domain")
+DOMAIN_DA_TEXT = read_marked_example(DOMAIN_EXAMPLE_PATH, "single_da_process")
+TABLE_BULK_TEXT = read_marked_example(TABLE_EXAMPLE_PATH, "bulk_table_catalog")
+TABLE_HOLD_HISTORY_TEXT = read_marked_example(TABLE_EXAMPLE_PATH, "single_hold_history")
+FILTER_BULK_TEXT = read_marked_example(FILTER_EXAMPLE_PATH, "bulk_main_flow_filters")
+FILTER_EQP_MODEL_TEXT = read_marked_example(FILTER_EXAMPLE_PATH, "single_eqp_model")
 
 
 def load_module(relative_path: str):
@@ -273,13 +257,70 @@ def run_filter_authoring_flow(raw_text: str, items: list[dict[str, Any]], monkey
     return written, store
 
 
+def test_domain_writer_duplicate_override_merge_resolves_review_blocker(monkeypatch: Any) -> None:
+    writer = load_module("langflow_components/domain_authoring_flow/07_domain_review_writer.py")
+    store = install_fake_mongo(monkeypatch, writer)
+    store[("metadata_driven_agent_v2", "agent_v2_domain_items")] = {
+        "domain:product_terms:automotive": {
+            "_id": "domain:product_terms:automotive",
+            "section": "product_terms",
+            "key": "automotive",
+            "payload": {"display_name": "AUTO향", "aliases": ["AUTO향"]},
+        }
+    }
+    payload = {
+        "metadata_type": "domain",
+        "items": [
+            {
+                "section": "product_terms",
+                "key": "automotive",
+                "payload": {"aliases": ["오토모티브향", "오토향"]},
+                "confidence": "high",
+            }
+        ],
+        "duplicate_decision": {
+            "action": "ask",
+            "requires_user_choice": True,
+            "allowed_actions": ["merge", "replace", "skip", "create_new"],
+        },
+        "existing_matches": [{"match_type": "same_key"}],
+        "errors": [],
+    }
+    review_json = {
+        "ready_to_save": False,
+        "supplement_requests": [
+            {
+                "field": "duplicate_action",
+                "reason": "같은 key의 기존 domain 정보가 있어 저장 방식을 선택해야 합니다.",
+            }
+        ],
+        "item_reviews": [{"section": "product_terms", "key": "automotive", "decision": "needs_fix"}],
+    }
+
+    written = writer.review_and_write_domain_payload(
+        payload,
+        json.dumps(review_json, ensure_ascii=False),
+        mongo_uri="mongodb://fake",
+        duplicate_action="merge",
+    )
+
+    assert written["review"]["ready_to_save"] is True
+    assert written["review"]["supplement_requests"] == []
+    assert written["duplicate_decision"]["action"] == "merge"
+    assert written["duplicate_decision"]["requires_user_choice"] is False
+    assert written["write_result"]["status"] == "ok"
+    assert written["write_result"]["saved_count"] == 1
+    doc = store[("metadata_driven_agent_v2", "agent_v2_domain_items")]["domain:product_terms:automotive"]
+    assert doc["payload"]["aliases"] == ["AUTO향", "오토모티브향", "오토향"]
+
+
 def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeypatch: Any) -> None:
     items = domain_items_from_current_metadata()
     written, store = run_domain_authoring_flow(DOMAIN_BULK_TEXT, items, monkeypatch)
 
     assert written["raw_text"] == DOMAIN_BULK_TEXT
     assert written["write_result"]["status"] == "ok"
-    assert written["write_result"]["saved_count"] == 30
+    assert written["write_result"]["saved_count"] == 33
     docs = store[("metadata_driven_agent_v2", "agent_v2_domain_items")]
     assert set(docs) >= {
         "domain:process_groups:DA",
@@ -293,6 +334,8 @@ def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeyp
     }
     assert docs["domain:product_terms:hbm"]["payload"]["condition_by_family"]["equipment"] == {"PKG_TYPE1": "HBM"}
     assert docs["domain:quantity_terms:lot_count"]["payload"]["aggregation"] == "nunique"
+    assert docs["domain:quantity_terms:equipment_count"]["payload"]["aggregation"] == "nunique"
+    assert docs["domain:quantity_terms:equipment_count"]["payload"]["output_column"] == "EQP_COUNT"
     assert docs["domain:metric_terms:achievement_rate"]["payload"]["required_quantity_terms"] == ["production", "target"]
     assert docs["domain:analysis_recipes:production_wip_target_rate"]["payload"]["grain_policy"] == "question_or_product_grain"
     assert docs["domain:analysis_recipes:production_wip_target_rate"]["payload"]["source_aliases_by_family"] == {
@@ -305,6 +348,8 @@ def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeyp
         "WF_QTY",
         "DIE_QTY",
     ]
+    assert docs["domain:analysis_recipes:equipment_for_previous_products"]["payload"]["result_mode"] == "detail_rows"
+    assert docs["domain:analysis_recipes:equipment_count_for_previous_products"]["payload"]["output_columns"] == ["EQP_COUNT"]
     assert docs["domain:status_terms:hold_lot"]["payload"]["result_mode"] == "detail_rows"
 
 
@@ -312,7 +357,7 @@ def test_worker_single_domain_text_input_saves_one_process_group(monkeypatch: An
     data = read_json("metadata/domain_items.json")
     item = {"section": "process_groups", "key": "DA", "payload": data["process_groups"]["DA"], "confidence": "high"}
     written, store = run_domain_authoring_flow(
-        "DA 공정 그룹을 등록할게요. DA는 D/A라고도 부르고 실제 공정은 D/A1부터 D/A6까지입니다.",
+        DOMAIN_DA_TEXT,
         [item],
         monkeypatch,
     )
@@ -341,13 +386,16 @@ def test_worker_bulk_table_text_input_saves_all_current_datasets(monkeypatch: An
         "HOLD_USER_ID",
         "EVENT_CD",
     ]
+    assert docs["table_catalog:target"]["payload"]["standard_column_aliases"]["OUT_PLAN"] == ["OUT계획", "TARGET"]
+    assert docs["table_catalog:equipment_status"]["payload"]["filter_mappings"]["MCP_NO"] == ["MCPSALENO", "MCP_NO"]
+    assert docs["table_catalog:equipment_status"]["payload"]["standard_column_aliases"]["MCP_NO"] == ["MCPSALENO"]
 
 
 def test_worker_single_table_text_input_saves_hold_history(monkeypatch: Any) -> None:
     data = read_json("metadata/table_catalog.json")
     item = {"dataset_key": "hold_history", "payload": data["datasets"]["hold_history"], "confidence": "high"}
     written, store = run_table_authoring_flow(
-        "hold_history 데이터셋을 등록할게요. LOT HOLD 이력이고 h_api로 조회하며 LOT_ID가 필수 입력값입니다.",
+        TABLE_HOLD_HISTORY_TEXT,
         [item],
         monkeypatch,
     )
@@ -355,7 +403,7 @@ def test_worker_single_table_text_input_saves_hold_history(monkeypatch: Any) -> 
     assert written["write_result"]["status"] == "ok"
     assert written["write_result"]["saved_count"] == 1
     docs = store[("metadata_driven_agent_v2", "agent_v2_table_catalog_items")]
-    assert docs["table_catalog:hold_history"]["payload"]["source_type"] == "h_api"
+    assert docs["table_catalog:hold_history"]["payload"]["source_type"] == "oracle"
 
 
 def test_worker_bulk_filter_text_input_saves_all_current_filters(monkeypatch: Any) -> None:
@@ -373,7 +421,7 @@ def test_worker_bulk_filter_text_input_saves_all_current_filters(monkeypatch: An
 def test_worker_single_filter_text_input_saves_eqp_model(monkeypatch: Any) -> None:
     item = next(item for item in filter_items_from_current_metadata() if item["filter_key"] == "EQP_MODEL")
     written, store = run_filter_authoring_flow(
-        "EQP_MODEL 필터를 등록할게요. 장비 모델을 뜻하고 후보 컬럼은 EQP_MODEL입니다.",
+        FILTER_EQP_MODEL_TEXT,
         [item],
         monkeypatch,
     )

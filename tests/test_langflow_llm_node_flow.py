@@ -435,7 +435,7 @@ def test_intent_normalizer_augments_existing_jobs_from_metadata(monkeypatch: Any
         "analysis_kind": "production_wip_target_rate",
         "datasets": ["production_today", "wip_today", "target"],
         "retrieval_jobs": [
-            {"dataset_key": "production_today", "source_alias": "prod", "filters": [], "params": {}},
+            {"dataset_key": "production_today", "source_alias": "prod", "filters": [], "params": {}, "source_config": {}},
             {"dataset_key": "wip_today", "source_alias": "wip", "filters": [], "params": {}},
             {"dataset_key": "target", "source_alias": "target", "filters": [], "params": {}},
         ],
@@ -447,6 +447,10 @@ def test_intent_normalizer_augments_existing_jobs_from_metadata(monkeypatch: Any
 
     assert jobs["production_today"]["params"]["DATE"] == "20260612"
     assert jobs["wip_today"]["params"]["DATE"] == "20260612"
+    assert jobs["production_today"]["source_config"]["db_key"] == "PNT_RPT"
+    assert "query_template" in jobs["production_today"]["source_config"]
+    assert jobs["target"]["source_config"]["doc_id"] == "GOODOCS_TARGET2_DOCUMENT_ID"
+    assert jobs["target"]["date_format"] == "YYYY-MM-DD"
     assert _filter_values(jobs["production_today"], "DATE") == ["20260612"]
     assert _filter_values(jobs["wip_today"], "DATE") == ["20260612"]
     assert _filter_values(jobs["target"], "DATE") == ["2026-06-12"]
@@ -583,6 +587,69 @@ def test_intent_normalizer_uses_state_product_key_summary_without_full_rows(monk
     assert plan["analysis_kind"] == "equipment_for_previous_products"
     assert plan["state_product_keys"] == [{"MODE": "LPDDR5"}, {"MODE": "HBM"}]
     assert any(item.get("field") == "PRODUCT_GRAIN" for item in payload["retrieval_jobs"][0]["filters"])
+
+
+def test_intent_normalizer_prunes_lot_status_for_followup_equipment_count(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("이 제품의 이 공정에 할당된 장비 대수를 알려줘", "test-session")
+    payload["state"] = {
+        "current_data": {
+            "columns": ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "WIP"],
+            "rows": [{"TECH": "FC", "DEN": "128G", "MODE": "LPDDR5", "PKG_TYPE1": "UFBGA", "PKG_TYPE2": "MOBILE", "LEAD": "LF", "MCP_NO": "EMPTY", "WIP": 10}],
+            "product_key_columns": ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO"],
+            "product_key_values": [{"TECH": "FC", "DEN": "128G", "MODE": "LPDDR5", "PKG_TYPE1": "UFBGA", "PKG_TYPE2": "MOBILE", "LEAD": "LF", "MCP_NO": "EMPTY"}],
+            "product_key_count": 1,
+            "data_ref": {"store": "mongodb", "ref_id": "previous-result", "collection_name": "agent_v2_result_store"},
+        }
+    }
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "followup_transform",
+        "analysis_kind": "equipment_by_model",
+        "datasets": ["equipment_status", "lot_status"],
+        "retrieval_jobs": [
+            {"dataset_key": "equipment_status", "source_alias": "equipment", "filters": [], "params": {}},
+            {"dataset_key": "lot_status", "source_alias": "lot_status", "filters": [{"field": "OPER_NAME", "op": "in", "values": ["D/A1"]}], "params": {}},
+        ],
+        "step_plan": [{"step_id": "equipment_count", "operation": "count", "source_alias": "equipment"}],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+    plan = payload["intent_plan"]
+
+    assert plan["analysis_kind"] == "equipment_count_for_previous_products"
+    assert plan["datasets"] == ["equipment_status"]
+    assert [job["dataset_key"] for job in payload["retrieval_jobs"]] == ["equipment_status"]
+    assert payload["retrieval_jobs"][0]["filters"] == [{"field": "PRODUCT_GRAIN", "op": "from_state"}]
+    assert plan["step_plan"][0]["operation"] == "equipment_count_for_previous_products"
+    assert plan["state_hydrate_mode"] == "summary"
+
+
+def test_retrieval_adapter_adds_standard_columns_from_physical_catalog_aliases(monkeypatch: Any) -> None:
+    metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
+    retrieval_adapter = load_component("langflow_components/main_flow/05_retrieval_payload_adapter.py")
+
+    payload = load_seed_metadata_payload(metadata_loader, {"state": {}}, monkeypatch)
+    retrieval_payload = {
+        "source_results": [
+            {
+                "dataset_key": "equipment_status",
+                "source_alias": "equipment",
+                "source_type": "oracle",
+                "data": [{"EQPID": "EQP1", "PKG1": "UFBGA", "PKG2": "MOBILE", "MCPSALENO": "EMPTY", "MODE": "LPDDR5"}],
+            }
+        ]
+    }
+
+    adapted = retrieval_adapter.adapt_retrieval_payload(payload, retrieval_payload)
+    row = adapted["runtime_sources"]["equipment"][0]
+
+    assert row["PKG_TYPE1"] == "UFBGA"
+    assert row["PKG_TYPE2"] == "MOBILE"
+    assert row["MCP_NO"] == "EMPTY"
 
 
 def test_intent_normalizer_marks_full_state_hydrate_for_previous_result_row_analysis(monkeypatch: Any) -> None:

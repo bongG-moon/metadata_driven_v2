@@ -5,13 +5,13 @@
 
 ## Source Types
 
-현재 카탈로그는 기존 구현에서 사용하던 4개 방식과 dummy 방식을 구분합니다.
+retriever는 기존 구현에서 사용하던 4개 방식과 dummy 방식을 모두 지원합니다. 현재 seed catalog는 예전 table catalog raw input을 기준으로 Oracle/Goodocs dataset을 기본 등록합니다.
 
 | source_type | 용도 | 현재 예시 dataset |
 | --- | --- | --- |
-| `oracle` | 생산, 재공, lot, 설비 현황처럼 SQL로 조회하는 MES/RPT 계열 데이터 | `production_today`, `production`, `wip_today`, `wip`, `lot_status`, `equipment_status` |
-| `h_api` | API 형태로 조회하는 이력/상세 데이터 | `hold_history` |
-| `datalake` | Datalake/SmallData/StarRocks 계열 분석 데이터 | `capacity` |
+| `oracle` | 생산, 재공, lot, hold 이력, 설비 현황, UPH처럼 SQL로 조회하는 MES/RPT/GMS 계열 데이터 | `production_today`, `production`, `wip_today`, `wip`, `lot_status`, `hold_history`, `equipment_status`, `capacity` |
+| `h_api` | API 형태로 조회하는 이력/상세 데이터 | 별도 h_api catalog 등록 시 사용 |
+| `datalake` | Datalake/SmallData/StarRocks 계열 분석 데이터 | 별도 datalake catalog 등록 시 사용 |
 | `goodocs` | Goodocs 문서/시트 기반 목표, 계획 데이터 | `target` |
 | `dummy` | 로컬 개발과 회귀검증용 deterministic fixture | 필요 시 임시 dataset |
 
@@ -30,8 +30,10 @@ Python reference runtime은 `reference_runtime/source_retrievers.py`에서 sourc
 RUN_LIVE_SOURCE_RETRIEVAL=false
 ORACLE_CONFIG_JSON=
 H_API_TOKEN=
-LAKE_USER_ID=
-LAKE_JWT_TK=
+LAKEHOUSE_USER_ID=
+LAKEHOUSE_TOKEN=
+LAKEHOUSE_S3_ACCESS_KEY=
+LAKEHOUSE_S3_SECRET_KEY=
 GOODOCS_USER_ID=
 GOODOCS_TOKEN_SOURCE=
 GOODOCS_TOKEN_KEY=
@@ -51,18 +53,17 @@ SOURCE_FETCH_LIMIT=5000
 }
 ```
 
-Datalake는 조직별 내부 런타임 차이가 커서 reference runtime에서는 `DATALAKE_QUERY_MODULE`의 `run_query(query, fetch_limit)` adapter를 호출하는 경계만 제공합니다.
-Langflow 실제 운영 노드에서는 기존 SmallData/Datalake component 방식을 붙이면 됩니다.
+Datalake Langflow component는 LakeHouse 방식으로 실행합니다. 입력으로 받은 `LAKEHOUSE_USER_ID`, `LAKEHOUSE_TOKEN`, `LAKEHOUSE_S3_ACCESS_KEY`, `LAKEHOUSE_S3_SECRET_KEY`를 환경변수에 세팅한 뒤 `lakes.LakeHouse(real_user_id=...)`, `ensure_running(cluster_type="starrocks")`, `auto_run_sync_paragraph(code=sql)`, `get_rst()` 순서로 결과를 읽습니다.
 
 ## Langflow Components
 
 `langflow_components/data_retrieval_flow/`에는 standalone custom component 예시가 들어 있습니다.
 
 - `01_dummy_data_retriever.py`: 모든 dataset에 대해 충분히 큰 제조 dummy data 생성
-- `02_oracle_query_retriever.py`: Oracle source job 처리 경계
-- `03_h_api_retriever.py`: H-API source job 처리 경계
-- `04_datalake_retriever.py`: Datalake source job 처리 경계
-- `05_goodocs_retriever.py`: Goodocs source job 처리 경계
+- `02_oracle_query_retriever.py`: Oracle source job 처리 및 `oracledb` 실제 조회
+- `03_h_api_retriever.py`: H-API source job 처리 및 token이 있을 때 실제 POST 조회
+- `04_datalake_retriever.py`: Datalake source job 처리 및 LakeHouse 실제 조회
+- `05_goodocs_retriever.py`: Goodocs source job 처리 및 adapter/module 기반 문서 조회
 - `06_source_retrieval_merger.py`: 여러 source 결과를 하나의 retrieval payload로 병합
 
 각 파일은 Langflow custom component에 하나씩 붙여 넣어도 동작하도록 sibling import 없이 작성했습니다.

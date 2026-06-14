@@ -101,12 +101,17 @@ def _target_rows(date_text: str) -> list[dict[str, Any]]:
     rows = []
     for index, product in enumerate(PRODUCT_ROWS, start=1):
         base = _product_base(product) * 22
+        input_plan = int(base * (10.5 + (index % 4) * 0.35))
+        out_plan = int(base * (0.86 + (index % 5) * 0.025))
         rows.append(
             {
                 "DATE": date_text,
                 **_product_keys(product),
-                "INPUT_PLAN": int(base * (10.5 + (index % 4) * 0.35)),
-                "OUT_PLAN": int(base * (0.86 + (index % 5) * 0.025)),
+                **_physical_product_aliases(product),
+                "INPUT_PLAN": input_plan,
+                "OUT_PLAN": out_plan,
+                "INPUT계획": input_plan,
+                "OUT계획": out_plan,
             }
         )
     return rows
@@ -120,6 +125,7 @@ def _lot_status_rows(work_date: str) -> list[dict[str, Any]]:
             "LOT_STAT_CD": "RUNNING",
             "LOT_HOLD_STAT_CD": "HOLD",
             **_product_keys(PRODUCT_ROWS[0]),
+            **_physical_product_aliases(PRODUCT_ROWS[0]),
             "SUB_PROD_QTY": 1200,
             "WF_QTY": 25,
             "IN_TAT": 12.5,
@@ -143,6 +149,7 @@ def _lot_status_rows(work_date: str) -> list[dict[str, Any]]:
                         "LOT_STAT_CD": status_cycle[(lot_index + slot) % len(status_cycle)],
                         "LOT_HOLD_STAT_CD": hold_cycle[(lot_index + slot) % len(hold_cycle)],
                         **_product_keys(product),
+                        **_physical_product_aliases(product),
                         "SUB_PROD_QTY": int(_product_base(product) * (0.50 + slot * 0.08)),
                         "WF_QTY": 12 + (lot_index % 16),
                         "IN_TAT": round(2.5 + (lot_index % 9) * 0.7, 2),
@@ -193,6 +200,7 @@ def _equipment_rows(work_date: str) -> list[dict[str, Any]]:
                     "EQP_MODEL": f"{prefix}-{chr(65 + slot)}",
                     "PRESS_CNT": 1 + (slot % 3),
                     **_product_keys(product),
+                    **_physical_product_aliases(product),
                     "LOT_ID": "T1234567GEN1" if product["DEVICE"] == "DEV-HBM3E-16HI" and slot < 2 else f"LOT{work_date[-4:]}{eqp_index}",
                     "RECIPE_ID": f"R-{product['MODE']}-{slot + 1:02d}",
                     "BASE_DT": work_date,
@@ -205,19 +213,41 @@ def _capacity_rows(work_date: str) -> list[dict[str, Any]]:
     rows = []
     for index, product in enumerate(PRODUCT_ROWS, start=1):
         for slot in range(2):
+            eqp_model = f"CAPA-{product['PKG_TYPE1']}-{slot + 1}"
             rows.append(
                 {
                     "BASE_DT": work_date,
                     "EQPID": f"EQP{2000 + index * 10 + slot}",
                     "EQP_ID": f"EQP{2000 + index * 10 + slot}",
-                    "EQP_MODEL": f"CAPA-{product['PKG_TYPE1']}-{slot + 1}",
+                    "EQP_MODEL": eqp_model,
+                    "EQP_MODEL_CD": eqp_model,
                     "RECIPE_ID": f"R-{product['MODE']}-{slot + 1:02d}",
                     "AVG_UPH_VAL": int(650 + _product_base(product) * 0.25 + slot * 80),
                     "PRESS_CNT": 1 + slot,
                     **_product_keys(product),
+                    **_physical_product_aliases(product),
                 }
             )
     return rows
+
+
+def _physical_product_aliases(product: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "Mode": product.get("MODE"),
+        "PKG1": product.get("PKG_TYPE1"),
+        "PKG2": product.get("PKG_TYPE2"),
+        "MCP NO": product.get("MCP_NO"),
+        "MCPSALENO": product.get("MCP_NO"),
+        "PROD_TYP": product.get("MODE"),
+        "TECH_NM": product.get("TECH"),
+        "DEN_TYP": product.get("DEN"),
+        "PKG_TYP": product.get("PKG_TYPE1"),
+        "PKG_TYP_2": product.get("PKG_TYPE2"),
+        "PKG_TYP2": product.get("PKG_TYPE2"),
+        "LEAD_CNT": product.get("LEAD"),
+        "PROD_GRP_ID": product.get("MCP_NO"),
+        "MCP_SALE_CD": product.get("MCP_NO"),
+    }
 
 
 def _production_qty(process_family: str, product: dict[str, Any], process_index: int, product_index: int) -> int:

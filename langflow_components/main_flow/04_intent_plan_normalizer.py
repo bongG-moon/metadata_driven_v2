@@ -44,6 +44,7 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
             notes.append("retrieval_jobs가 없어 LLM이 지정한 datasets, 메타데이터, 요청 문맥을 기준으로 조회 작업을 보완했습니다.")
         else:
             errors.append("retrieval_jobs가 없고 LLM이 지정한 datasets도 없어 조회 작업을 보완할 수 없습니다.")
+    raw_jobs = _repair_followup_equipment_plan(plan, raw_jobs, catalog, question, notes)
     _repair_followup_analysis_kind(plan, raw_jobs, catalog, notes)
     for index, raw_job in enumerate(raw_jobs):
         if not isinstance(raw_job, dict):
@@ -72,6 +73,17 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
             _required_product_grain(plan, dataset_catalog),
         )
         job["source_type"] = dataset_catalog.get("source_type", job.get("source_type", "dummy"))
+        if isinstance(dataset_catalog.get("source_config"), dict):
+            source_config = deepcopy(dataset_catalog["source_config"])
+            if isinstance(job.get("source_config"), dict):
+                source_config.update(deepcopy(job["source_config"]))
+            job["source_config"] = source_config
+        if "required_params" not in job and isinstance(dataset_catalog.get("required_params"), list):
+            job["required_params"] = deepcopy(dataset_catalog["required_params"])
+        if "required_param_mappings" not in job and isinstance(dataset_catalog.get("required_param_mappings"), dict):
+            job["required_param_mappings"] = deepcopy(dataset_catalog["required_param_mappings"])
+        if "date_format" not in job and dataset_catalog.get("date_format"):
+            job["date_format"] = deepcopy(dataset_catalog["date_format"])
         if "primary_quantity_column" not in job and dataset_catalog.get("primary_quantity_column"):
             job["primary_quantity_column"] = deepcopy(dataset_catalog["primary_quantity_column"])
         normalized_jobs.append(job)
@@ -561,6 +573,10 @@ def _fallback_retrieval_jobs(
                 "filters": filters,
                 "required_columns": dataset_catalog.get("columns", []),
                 "source_type": dataset_catalog.get("source_type", "dummy"),
+                "source_config": deepcopy(dataset_catalog.get("source_config", {})),
+                "required_params": deepcopy(dataset_catalog.get("required_params", [])),
+                "required_param_mappings": deepcopy(dataset_catalog.get("required_param_mappings", {})),
+                "date_format": deepcopy(dataset_catalog.get("date_format", "")),
                 "primary_quantity_column": deepcopy(dataset_catalog.get("primary_quantity_column")),
             }
         )
@@ -584,7 +600,7 @@ def _normalize_required_columns(raw_columns: Any, catalog: dict[str, Any], produ
     quantity = catalog.get("primary_quantity_column")
     quantity_columns = quantity if isinstance(quantity, list) else [quantity] if quantity else []
     normalized.extend(str(item) for item in quantity_columns if str(item or "").strip())
-    supported_product_columns = [column for column in _unique(product_grain or []) if column in catalog_columns]
+    supported_product_columns = [column for column in _unique(product_grain or []) if column in filter_mappings or column in catalog_columns]
     normalized.extend(supported_product_columns)
     return _unique(normalized)
 
@@ -599,6 +615,7 @@ def _required_product_grain(plan: dict[str, Any], catalog: dict[str, Any]) -> li
         "low_output_vs_target",
         "date_split_production_plan_gap",
         "equipment_for_previous_products",
+        "equipment_count_for_previous_products",
     }
     if kind not in product_grain_kinds:
         return []
@@ -948,6 +965,115 @@ def _repair_followup_analysis_kind(
             _append_once(notes, "후속 질문 계획을 이전 state의 제품 key 기준으로 조정했습니다.")
 
 
+def _repair_followup_equipment_plan(
+    plan: dict[str, Any],
+    raw_jobs: list[Any],
+    catalog: dict[str, Any],
+    question: str,
+    notes: list[str],
+) -> list[Any]:
+    if plan.get("intent_type") != "followup_transform" or not plan.get("state_product_keys"):
+        return raw_jobs
+    if not _is_followup_equipment_question(question, raw_jobs, catalog, plan):
+        return raw_jobs
+
+    count_requested = _is_equipment_count_question(question, plan)
+    analysis_kind = "equipment_count_for_previous_products" if count_requested else "equipment_for_previous_products"
+    plan["analysis_kind"] = analysis_kind
+
+    equipment_jobs = []
+    for raw_job in raw_jobs:
+        if not isinstance(raw_job, dict):
+            continue
+        dataset_key = str(raw_job.get("dataset_key") or "")
+        dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
+        if str(dataset_catalog.get("dataset_family") or "") == "equipment":
+            equipment_jobs.append(deepcopy(raw_job))
+    if not equipment_jobs:
+        equipment_jobs = [{"dataset_key": "equipment_status", "source_alias": "equipment_for_previous_products", "filters": [], "params": {}}]
+
+    primary_job = equipment_jobs[0]
+    primary_job["dataset_key"] = "equipment_status"
+    primary_job["source_alias"] = str(primary_job.get("source_alias") or "equipment_for_previous_products")
+    primary_job["filters"] = [{"field": "PRODUCT_GRAIN", "op": "from_state"}]
+    primary_job.setdefault("params", {})
+
+    product_grain = [str(item) for item in plan.get("product_grain", []) if str(item or "").strip()]
+    if count_requested:
+        primary_job["purpose"] = "followup_equipment_count"
+        primary_job["required_columns"] = ["EQPID", *product_grain]
+        plan["analysis_output_columns"] = ["EQP_COUNT"]
+        plan["step_plan"] = [
+            {
+                "step_id": "count_equipment_for_previous_products",
+                "operation": "equipment_count_for_previous_products",
+                "source_alias": primary_job["source_alias"],
+                "group_by": deepcopy(product_grain),
+                "count_column": "EQPID",
+                "output_columns": [*deepcopy(product_grain), "EQP_COUNT"],
+            }
+        ]
+    else:
+        primary_job["purpose"] = "followup_equipment_detail_rows"
+        primary_job["required_columns"] = ["EQPID", "EQP_MODEL", "PRESS_CNT", *product_grain, "LOT_ID", "RECIPE_ID"]
+        plan["analysis_output_columns"] = ["EQPID", "EQP_MODEL", "PRESS_CNT", "LOT_ID", "RECIPE_ID"]
+        plan["step_plan"] = [
+            {
+                "step_id": "filter_equipment_for_previous_products",
+                "operation": "detail_rows_for_product_keys",
+                "source_alias": primary_job["source_alias"],
+                "columns": ["EQPID", "EQP_MODEL", "PRESS_CNT", *deepcopy(product_grain), "LOT_ID", "RECIPE_ID"],
+                "output_ref": "final_result",
+            }
+        ]
+
+    plan["datasets"] = ["equipment_status"]
+    _append_once(notes, "후속 장비 질문은 이전 제품 key와 equipment_status만 사용하도록 조회 작업을 정리했습니다.")
+    return [primary_job]
+
+
+def _is_followup_equipment_question(
+    question: str,
+    raw_jobs: list[Any],
+    catalog: dict[str, Any],
+    plan: dict[str, Any],
+) -> bool:
+    if _mentions_any(question, ["장비", "설비", "EQP", "equipment", "Equipment"]):
+        return True
+    if str(plan.get("analysis_kind") or "") in {"equipment_for_previous_products", "equipment_count_for_previous_products", "equipment_by_model"}:
+        return True
+    for raw_job in raw_jobs:
+        if not isinstance(raw_job, dict):
+            continue
+        dataset_key = str(raw_job.get("dataset_key") or "")
+        dataset_catalog = catalog.get(dataset_key) if isinstance(catalog.get(dataset_key), dict) else {}
+        if str(dataset_catalog.get("dataset_family") or "") == "equipment":
+            return True
+    return False
+
+
+def _is_equipment_count_question(question: str, plan: dict[str, Any]) -> bool:
+    if str(plan.get("analysis_kind") or "") == "equipment_count_for_previous_products":
+        return True
+    return _mentions_any(
+        question,
+        [
+            "장비 대수",
+            "설비 대수",
+            "장비 수",
+            "설비 수",
+            "장비수",
+            "설비수",
+            "몇 대",
+            "몇대",
+            "대수",
+            "count",
+            "number of equipment",
+            "equipment count",
+        ],
+    )
+
+
 def _mark_state_hydration_need(
     plan: dict[str, Any],
     payload: dict[str, Any],
@@ -990,7 +1116,7 @@ def _has_mongo_data_ref(current_data: dict[str, Any]) -> bool:
 
 
 def _state_product_keys_are_enough(plan: dict[str, Any], question: str) -> bool:
-    if str(plan.get("analysis_kind") or "") != "equipment_for_previous_products":
+    if str(plan.get("analysis_kind") or "") not in {"equipment_for_previous_products", "equipment_count_for_previous_products"}:
         return False
     if not plan.get("state_product_keys"):
         return False
