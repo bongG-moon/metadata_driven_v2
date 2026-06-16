@@ -31,6 +31,21 @@ SUPPORTED_ANALYSIS_KINDS = [
 
 def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
+    if _direct_response_ready(payload):
+        prompt = json.dumps(
+            {
+                "intent_type": "metadata_lookup",
+                "analysis_kind": ((payload.get("metadata_qa") or {}).get("metadata_action") or "none")
+                if isinstance(payload.get("metadata_qa"), dict)
+                else "none",
+                "route": (payload.get("intent_plan") or {}).get("route", "metadata_qa")
+                if isinstance(payload.get("intent_plan"), dict)
+                else "metadata_qa",
+                "reasoning_steps": ["Direct metadata response already prepared; downstream normalizer should pass through."],
+            },
+            ensure_ascii=False,
+        )
+        return {"prompt": prompt, "payload": payload, "prompt_type": "direct_response_skip"}
     question = str((payload.get("request") or {}).get("question") or "")
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
@@ -118,6 +133,8 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "- For follow-up equipment questions, use only equipment_status unless the user explicitly asks for Lot, Hold, wafer, or die data.",
             "- For follow-up 장비 현황/설비 현황 questions, use analysis_kind=equipment_for_previous_products and return equipment detail rows.",
             "- For follow-up 장비 대수/설비 대수/몇 대 questions, use analysis_kind=equipment_count_for_previous_products and calculate EQP_COUNT as EQPID.nunique().",
+            "- For follow-up 장비 대수/설비 대수/몇 대 questions, intent_type must be followup_transform, datasets must be exactly ['equipment_status'], and retrieval_jobs must contain only equipment_status. Do not use capacity for assigned equipment count.",
+            "- For 장비 보유 현황/설비 보유 현황 by EQP_MODEL/model별 questions, use intent_type=single_retrieval_analysis, dataset equipment_status, and analysis_kind=equipment_by_model. Calculate EQP_COUNT as EQPID.nunique() and PRESS_CNT as sum(PRESS_CNT); do not use detail_rows unless the user asks for list/detail rows.",
             "- For follow-up questions that recalculate, filter, sort, regroup, or show detail rows from the previous result itself, set requires_full_state_hydrate=true and state_hydrate_mode=full.",
             "- For follow-up questions that only need previous product keys for a new retrieval, keep state_hydrate_mode=summary.",
             "- For 오늘/현재, prefer datasets whose metadata date_scope is current_day unless the question asks for history.",
@@ -207,6 +224,10 @@ def _payload(value: Any) -> dict[str, Any]:
     return dict(data) if isinstance(data, dict) else {}
 
 
+def _direct_response_ready(payload: dict[str, Any]) -> bool:
+    return bool(payload.get("direct_response_ready"))
+
+
 class IntentPromptBuilder(Component):
     display_name = "03 Intent Prompt Builder"
     description = "Builds the prompt that should be sent to the Langflow Gemini/LLM node for intent planning."
@@ -218,7 +239,7 @@ class IntentPromptBuilder(Component):
 
     def build_prompt(self) -> Message:
         prompt_payload = build_intent_prompt_payload(getattr(self, "payload", None))
-        self.status = {"prompt_type": "intent", "chars": len(prompt_payload["prompt"])}
+        self.status = {"prompt_type": prompt_payload.get("prompt_type", "intent"), "chars": len(prompt_payload["prompt"])}
         return Message(text=prompt_payload["prompt"])
 
     def build_prompt_payload(self) -> Data:

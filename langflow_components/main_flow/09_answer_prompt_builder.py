@@ -12,6 +12,21 @@ from lfx.schema.message import Message
 
 def build_answer_prompt_payload(payload_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
+    if payload.get("direct_response_ready"):
+        prompt = json.dumps(
+            {"answer_message": payload.get("answer_message", "")},
+            ensure_ascii=False,
+        )
+        return {
+            "prompt": prompt,
+            "payload": payload,
+            "prompt_type": "direct_response_skip",
+            "answer_context": {
+                "question": (payload.get("request") or {}).get("question", "") if isinstance(payload.get("request"), dict) else "",
+                "data": payload.get("data", {}),
+                "metadata_qa": payload.get("metadata_qa", {}),
+            },
+        }
     request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
     plan = payload.get("intent_plan") if isinstance(payload.get("intent_plan"), dict) else {}
     analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
@@ -93,7 +108,7 @@ class AnswerPromptBuilder(Component):
         prompt_payload = build_answer_prompt_payload(getattr(self, "payload", None))
         context = prompt_payload.get("answer_context", {})
         self.status = {
-            "prompt_type": "final_answer",
+            "prompt_type": prompt_payload.get("prompt_type", "final_answer"),
             "chars": len(prompt_payload["prompt"]),
             "rows": (context.get("data") or {}).get("row_count", 0),
         }

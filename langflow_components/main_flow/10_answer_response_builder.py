@@ -12,6 +12,8 @@ from lfx.schema.data import Data
 
 def build_answer_response_payload(payload_value: Any, llm_response_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
+    if payload.get("direct_response_ready"):
+        return payload
     analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
     data = _build_data(payload, analysis)
     applied_scope = _build_applied_scope(payload)

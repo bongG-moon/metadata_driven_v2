@@ -725,6 +725,51 @@ def test_intent_normalizer_maps_logical_required_columns_to_dataset_columns(monk
     assert payload["intent_plan"]["step_plan"][0]["group_by_columns"] == ["OPER_SHORT_DESC"]
 
 
+def test_intent_normalizer_repairs_lot_count_kind_from_generic_aggregate(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("현재 작업대기 Lot 수량을 공정별로 알려줘", "test-session")
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "single_retrieval_analysis",
+        "analysis_kind": "aggregate_wip_total",
+        "datasets": ["lot_status"],
+        "filters": [{"field": "LOT_STAT_CD", "op": "in", "values": ["WAITING"]}],
+        "metric": "LOT_ID",
+        "analysis_output_columns": ["OPER_NAME", "LOT_COUNT"],
+        "retrieval_jobs": [
+            {
+                "dataset_key": "lot_status",
+                "source_alias": "lot_data",
+                "filters": [{"field": "LOT_STAT_CD", "op": "in", "values": ["WAITING"]}],
+                "required_columns": ["OPER_NAME", "LOT_ID"],
+            }
+        ],
+        "step_plan": [
+            {
+                "step_id": "aggregate_waiting_lots",
+                "operation": "aggregate",
+                "source_alias": "lot_data",
+                "metric": "LOT_ID",
+                "aggregation": "nunique",
+                "group_by": ["OPER_NAME"],
+                "output_columns": ["OPER_NAME", "LOT_COUNT"],
+            }
+        ],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+
+    assert payload["intent_plan"]["analysis_kind"] == "lot_count_by_process"
+    assert payload["intent_plan"]["step_plan"][0]["operation"] == "lot_count_by_process"
+    assert payload["intent_plan"]["step_plan"][0]["group_by_columns"] == ["OPER_SHORT_DESC"]
+    assert payload["retrieval_jobs"][0]["dataset_key"] == "lot_status"
+    assert "OPER_SHORT_DESC" in payload["retrieval_jobs"][0]["required_columns"]
+    assert any("LOT_ID unique count" in item for item in payload["info"])
+
+
 def test_intent_normalizer_adds_primary_quantity_to_equipment_columns(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")

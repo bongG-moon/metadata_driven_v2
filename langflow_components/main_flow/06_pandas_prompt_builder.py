@@ -12,6 +12,16 @@ from lfx.schema.message import Message
 
 def build_pandas_prompt_payload(payload_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
+    if payload.get("direct_response_ready"):
+        prompt = json.dumps(
+            {
+                "code": "result_df = pd.DataFrame([])",
+                "output_columns": [],
+                "reasoning_steps": ["Direct metadata response already prepared; pandas execution should pass through."],
+            },
+            ensure_ascii=False,
+        )
+        return {"prompt": prompt, "payload": payload, "prompt_type": "direct_response_skip", "source_summary": {}}
     request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
     plan = payload.get("intent_plan") if isinstance(payload.get("intent_plan"), dict) else {}
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
@@ -202,7 +212,7 @@ class PandasPromptBuilder(Component):
     def build_prompt(self) -> Message:
         prompt_payload = build_pandas_prompt_payload(getattr(self, "payload", None))
         self.status = {
-            "prompt_type": "pandas_code",
+            "prompt_type": prompt_payload.get("prompt_type", "pandas_code"),
             "chars": len(prompt_payload["prompt"]),
             "sources": list(prompt_payload.get("source_summary", {}).keys()),
         }

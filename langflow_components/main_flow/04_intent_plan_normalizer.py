@@ -13,6 +13,8 @@ from lfx.schema.data import Data
 
 def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
+    if payload.get("direct_response_ready"):
+        return payload
     llm_text = _text(llm_response_value)
     llm_json = _extract_json_object(llm_text)
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
@@ -44,6 +46,7 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
             notes.append("retrieval_jobs가 없어 LLM이 지정한 datasets, 메타데이터, 요청 문맥을 기준으로 조회 작업을 보완했습니다.")
         else:
             errors.append("retrieval_jobs가 없고 LLM이 지정한 datasets도 없어 조회 작업을 보완할 수 없습니다.")
+    raw_jobs = _repair_lot_count_plan(plan, raw_jobs, catalog, question, notes)
     raw_jobs = _repair_followup_equipment_plan(plan, raw_jobs, catalog, question, notes)
     _repair_followup_analysis_kind(plan, raw_jobs, catalog, notes)
     for index, raw_job in enumerate(raw_jobs):
@@ -963,6 +966,97 @@ def _repair_followup_analysis_kind(
         if str(plan.get("analysis_kind") or "") in {"equipment_by_model", "detail_rows", "none"}:
             plan["analysis_kind"] = "equipment_for_previous_products"
             _append_once(notes, "후속 질문 계획을 이전 state의 제품 key 기준으로 조정했습니다.")
+
+
+def _repair_lot_count_plan(
+    plan: dict[str, Any],
+    raw_jobs: list[Any],
+    catalog: dict[str, Any],
+    question: str,
+    notes: list[str],
+) -> list[Any]:
+    if not _is_lot_count_by_process_question(plan, raw_jobs, catalog, question):
+        return raw_jobs
+
+    lot_jobs = [deepcopy(job) for job in raw_jobs if isinstance(job, dict) and str(job.get("dataset_key") or "") == "lot_status"]
+    if not lot_jobs:
+        lot_jobs = [{"dataset_key": "lot_status", "source_alias": "lot_status", "filters": [], "params": {}}]
+    primary_job = lot_jobs[0]
+    primary_job["dataset_key"] = "lot_status"
+    primary_job["source_alias"] = str(primary_job.get("source_alias") or "lot_status")
+    primary_job.setdefault("params", {})
+    filters = primary_job.get("filters") if isinstance(primary_job.get("filters"), list) else []
+    primary_job["filters"] = deepcopy(filters)
+    required_columns = primary_job.get("required_columns") if isinstance(primary_job.get("required_columns"), list) else []
+    primary_job["required_columns"] = _unique([*required_columns, "OPER_SHORT_DESC", "LOT_ID", "LOT_STAT_CD"])
+
+    plan["intent_type"] = "single_retrieval_analysis"
+    plan["analysis_kind"] = "lot_count_by_process"
+    plan["datasets"] = ["lot_status"]
+    plan["product_grain"] = []
+    plan["analysis_output_columns"] = ["OPER_SHORT_DESC", "LOT_COUNT"]
+    plan["step_plan"] = [
+        {
+            "step_id": "count_lots_by_process",
+            "operation": "lot_count_by_process",
+            "source_alias": primary_job["source_alias"],
+            "group_by_columns": ["OPER_SHORT_DESC"],
+            "count_column": "LOT_ID",
+            "output_columns": ["OPER_SHORT_DESC", "LOT_COUNT"],
+        }
+    ]
+    _append_once(notes, "Lot 상태/수량 질문은 lot_status의 LOT_ID unique count 기준 공정별 집계로 정리했습니다.")
+    return [primary_job]
+
+
+def _is_lot_count_by_process_question(
+    plan: dict[str, Any],
+    raw_jobs: list[Any],
+    catalog: dict[str, Any],
+    question: str,
+) -> bool:
+    if str(plan.get("analysis_kind") or "") == "lot_count_by_process":
+        return True
+    datasets = {str(item) for item in plan.get("datasets", []) if str(item or "").strip()}
+    has_lot_status = "lot_status" in datasets
+    has_lot_status = has_lot_status or any(isinstance(job, dict) and str(job.get("dataset_key") or "") == "lot_status" for job in raw_jobs)
+    if not has_lot_status:
+        return False
+    if not (
+        _mentions_any(question, ["작업대기", "작업중", "Lot 수량", "LOT 수량", "Lot 개수", "lot count"])
+        or _raw_jobs_include_filter(raw_jobs, "LOT_STAT_CD")
+        or _plan_mentions_lot_count(plan)
+    ):
+        return False
+    if _mentions_any(question, ["wafer", "Wafer", "die", "Die", "DIE"]):
+        return False
+    return True
+
+
+def _raw_jobs_include_filter(raw_jobs: list[Any], field: str) -> bool:
+    for job in raw_jobs:
+        if not isinstance(job, dict):
+            continue
+        filters = job.get("filters") if isinstance(job.get("filters"), list) else []
+        if any(isinstance(item, dict) and str(item.get("field") or "") == field for item in filters):
+            return True
+    return False
+
+
+def _plan_mentions_lot_count(plan: dict[str, Any]) -> bool:
+    values: list[Any] = [
+        plan.get("metric"),
+        plan.get("quantity_column"),
+        plan.get("count_column"),
+        *(plan.get("analysis_output_columns") if isinstance(plan.get("analysis_output_columns"), list) else []),
+    ]
+    for step in plan.get("step_plan", []) if isinstance(plan.get("step_plan"), list) else []:
+        if isinstance(step, dict):
+            values.extend([step.get("metric"), step.get("count_column"), step.get("aggregation")])
+            if isinstance(step.get("output_columns"), list):
+                values.extend(step["output_columns"])
+    text = " ".join(str(item or "") for item in values)
+    return any(token in text for token in ["LOT_COUNT", "nunique"])
 
 
 def _repair_followup_equipment_plan(

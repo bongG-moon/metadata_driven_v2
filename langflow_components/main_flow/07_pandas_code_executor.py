@@ -44,6 +44,8 @@ FORBIDDEN_ROOT_NAMES = {
 
 def execute_pandas_from_llm(payload_value: Any, llm_response_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
+    if payload.get("direct_response_ready"):
+        return payload
     plan = payload.get("intent_plan") if isinstance(payload.get("intent_plan"), dict) else {}
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
     runtime_sources = payload.get("runtime_sources") if isinstance(payload.get("runtime_sources"), dict) else {}
@@ -85,7 +87,15 @@ def _execute_generated_pandas_code(
             "executed": False,
         }
 
-    sources = {alias: pd.DataFrame(rows if isinstance(rows, list) else []) for alias, rows in runtime_sources.items()}
+    required_columns_by_alias = _required_columns_by_alias(plan)
+    sources = {
+        alias: _source_dataframe(
+            rows if isinstance(rows, list) else [],
+            required_columns_by_alias.get(str(alias), []),
+            str(plan.get("analysis_kind") or ""),
+        )
+        for alias, rows in runtime_sources.items()
+    }
     local_vars: dict[str, Any] = {"pd": pd, "sources": sources, "plan": deepcopy(plan), "state": deepcopy(state)}
     safe_globals = {"__builtins__": _safe_builtins(), "pd": pd}
     try:
@@ -96,18 +106,22 @@ def _execute_generated_pandas_code(
         result_df = result_df.copy()
         result_df = _normalize_result_columns(result_df, plan)
     except Exception as exc:
-        return {
-            "status": "error",
-            "analysis_kind": plan.get("analysis_kind"),
-            "analysis_code": code,
-            "columns": [],
-            "rows": [],
-            "row_count": 0,
-            "intermediate_refs": {},
-            "errors": [f"Generated pandas code failed: {exc}"],
-            "safety_passed": True,
-            "executed": False,
-        }
+        fallback_df = _fallback_result_df(plan, runtime_sources)
+        if fallback_df is None:
+            return {
+                "status": "error",
+                "analysis_kind": plan.get("analysis_kind"),
+                "analysis_code": code,
+                "columns": [],
+                "rows": [],
+                "row_count": 0,
+                "intermediate_refs": {},
+                "errors": [f"Generated pandas code failed: {exc}"],
+                "safety_passed": True,
+                "executed": False,
+            }
+        result_df = _normalize_result_columns(fallback_df, plan)
+        code = code + f"\n# executor_fallback: {exc}"
 
     rows = result_df.to_dict(orient="records")
     product_key_columns = _product_key_columns(plan, list(result_df.columns))
@@ -159,6 +173,8 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
                 break
     if analysis_kind == "lot_quantity_summary" and "DIE_QTY" not in result.columns and "SUB_PROD_QTY" in result.columns:
         rename_map["SUB_PROD_QTY"] = "DIE_QTY"
+    if analysis_kind == "lot_count_by_process" and "OPER_SHORT_DESC" not in result.columns and "OPER_NAME" in result.columns:
+        rename_map["OPER_NAME"] = "OPER_SHORT_DESC"
 
     if analysis_kind == "rank_wip_then_join_production":
         if "WIP_RANK" not in result.columns and "rank" in result.columns:
@@ -185,9 +201,45 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
 
     if rename_map:
         result = result.rename(columns=rename_map)
+    if analysis_kind == "rank_wip_then_join_production" and "RANK_GROUP" not in result.columns and "OPER_NAME" in result.columns:
+        result.insert(0, "RANK_GROUP", result["OPER_NAME"].map(_rank_group_from_oper_name))
     if analysis_kind == "aggregate_wip_total" and "SCOPE" not in result.columns and "WIP" in result.columns:
         result.insert(0, "SCOPE", plan.get("scope_label") or "ALL")
     return _order_result_columns(result, plan)
+
+
+def _fallback_result_df(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame | None:
+    if str(plan.get("analysis_kind") or "") != "lot_quantity_summary":
+        return None
+    alias = _primary_source_alias(plan, runtime_sources)
+    rows = runtime_sources.get(alias) if alias else None
+    if not isinstance(rows, list):
+        return None
+    frame = _source_dataframe(rows, [], str(plan.get("analysis_kind") or ""))
+    lot_count = frame["LOT_ID"].nunique() if "LOT_ID" in frame.columns else 0
+    wf_qty = frame["WF_QTY"].sum() if "WF_QTY" in frame.columns else 0
+    die_source = "SUB_PROD_QTY" if "SUB_PROD_QTY" in frame.columns else "DIE_QTY"
+    die_qty = frame[die_source].sum() if die_source in frame.columns else 0
+    return pd.DataFrame([{"LOT_COUNT": lot_count, "WF_QTY": wf_qty, "DIE_QTY": die_qty}])
+
+
+def _primary_source_alias(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> str:
+    for step in plan.get("step_plan", []) if isinstance(plan.get("step_plan"), list) else []:
+        if isinstance(step, dict) and step.get("source_alias") in runtime_sources:
+            return str(step["source_alias"])
+    for alias in runtime_sources:
+        return str(alias)
+    return ""
+
+
+def _rank_group_from_oper_name(value: Any) -> str:
+    text = str(value or "")
+    upper = text.upper()
+    if upper.startswith("D/A") or upper.startswith("DA"):
+        return "DA"
+    if upper.startswith("W/B") or upper.startswith("WB"):
+        return "WB"
+    return text
 
 
 def _order_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.DataFrame:
@@ -247,6 +299,105 @@ def _preferred_columns(plan: dict[str, Any]) -> list[str]:
     if kind == "equipment_count_for_previous_products":
         return [*product_keys, "EQP_COUNT"]
     return []
+
+
+def _source_dataframe(
+    rows: list[dict[str, Any]],
+    required_columns: list[str] | None = None,
+    analysis_kind: str = "",
+) -> pd.DataFrame:
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        frame = pd.DataFrame(columns=[str(column) for column in (required_columns or [])])
+    frame = _drop_redundant_alias_columns(frame)
+    return _add_missing_required_columns(frame, required_columns or [], analysis_kind)
+
+
+def _required_columns_by_alias(plan: dict[str, Any]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for job in plan.get("retrieval_jobs", []) if isinstance(plan.get("retrieval_jobs"), list) else []:
+        if not isinstance(job, dict):
+            continue
+        alias = str(job.get("source_alias") or job.get("dataset_key") or "")
+        columns = job.get("required_columns") if isinstance(job.get("required_columns"), list) else []
+        if alias:
+            result[alias] = _unique_columns([str(column) for column in columns if str(column or "").strip()])
+    return result
+
+
+def _add_missing_required_columns(frame: pd.DataFrame, required_columns: list[str], analysis_kind: str) -> pd.DataFrame:
+    if not required_columns:
+        return frame
+    result = frame.copy()
+    existing = set(str(column) for column in result.columns)
+    for column in required_columns:
+        text = str(column or "").strip()
+        if not text or text in existing:
+            continue
+        standard = _standard_column_for_alias(text)
+        if analysis_kind != "detail_rows" and standard and standard in existing:
+            continue
+        result[text] = None
+        existing.add(text)
+    return result
+
+
+def _drop_redundant_alias_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    alias_columns = {
+        "MODE": ["Mode", "PROD_TYP"],
+        "PKG_TYPE1": ["PKG1", "PKG_TYP"],
+        "PKG_TYPE2": ["PKG2", "PKG_TYP_2", "PKG_TYP2"],
+        "MCP_NO": ["MCP NO", "MCPSALENO", "PROD_GRP_ID", "MCP_SALE_CD"],
+        "TECH": ["TECH_NM"],
+        "DEN": ["DEN_TYP"],
+        "LEAD": ["LEAD_CNT"],
+        "INPUT_PLAN": ["INPUT계획"],
+        "OUT_PLAN": ["OUT계획", "TARGET"],
+        "EQP_MODEL": ["EQP_MODEL_CD"],
+    }
+    drop_columns: list[str] = []
+    existing = set(str(column) for column in frame.columns)
+    for standard, aliases in alias_columns.items():
+        if standard not in existing:
+            continue
+        for alias in aliases:
+            if alias in existing:
+                drop_columns.append(alias)
+    if not drop_columns:
+        return frame
+    return frame.drop(columns=drop_columns, errors="ignore")
+
+
+def _standard_column_for_alias(alias: str) -> str:
+    alias_to_standard = {
+        "Mode": "MODE",
+        "PROD_TYP": "MODE",
+        "PKG1": "PKG_TYPE1",
+        "PKG_TYP": "PKG_TYPE1",
+        "PKG2": "PKG_TYPE2",
+        "PKG_TYP_2": "PKG_TYPE2",
+        "PKG_TYP2": "PKG_TYPE2",
+        "MCP NO": "MCP_NO",
+        "MCPSALENO": "MCP_NO",
+        "PROD_GRP_ID": "MCP_NO",
+        "MCP_SALE_CD": "MCP_NO",
+        "TECH_NM": "TECH",
+        "DEN_TYP": "DEN",
+        "LEAD_CNT": "LEAD",
+        "INPUT계획": "INPUT_PLAN",
+        "OUT계획": "OUT_PLAN",
+        "TARGET": "OUT_PLAN",
+        "EQP_MODEL_CD": "EQP_MODEL",
+    }
+    return alias_to_standard.get(alias, "")
+
+
+def _unique_columns(columns: list[str]) -> list[str]:
+    result = []
+    for column in columns:
+        if column not in result:
+            result.append(column)
+    return result
 
 
 def _strip_harmless_pandas_import(code: str) -> str:

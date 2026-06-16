@@ -38,6 +38,8 @@ def store_payload_in_mongodb(
     payload = _payload(payload_value)
     if not payload:
         return {"mongo_data_store": {"enabled": False, "stored": False, "ref_count": 0, "errors": ["empty payload"]}}
+    if payload.get("direct_response_ready"):
+        return {**payload, "mongo_data_store": {"enabled": False, "stored": False, "ref_count": 0, "errors": [], "reason": "direct_response_ready"}}
 
     if not _truthy(enabled):
         return {**payload, "mongo_data_store": {"enabled": False, "stored": False, "ref_count": 0, "errors": []}}

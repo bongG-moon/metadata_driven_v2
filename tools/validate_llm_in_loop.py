@@ -295,6 +295,8 @@ def build_intent_prompt(question: str, metadata: dict[str, Any], state: dict[str
             "- For follow-up equipment questions, use only equipment_status unless the user explicitly asks for Lot, Hold, wafer, or die data.",
             "- For follow-up 장비 현황/설비 현황 questions, use analysis_kind=equipment_for_previous_products and return equipment detail rows.",
             "- For follow-up 장비 대수/설비 대수/몇 대 questions, use analysis_kind=equipment_count_for_previous_products and calculate EQP_COUNT as EQPID.nunique().",
+            "- For follow-up 장비 대수/설비 대수/몇 대 questions, intent_type must be followup_transform, datasets must be exactly ['equipment_status'], and retrieval_jobs must contain only equipment_status. Do not use capacity or lot_status for assigned equipment count.",
+            "- For 장비 보유 현황/설비 보유 현황 by EQP_MODEL/model별 questions, use intent_type=single_retrieval_analysis, dataset equipment_status, and analysis_kind=equipment_by_model. Calculate EQP_COUNT as EQPID.nunique() and PRESS_CNT as sum(PRESS_CNT); do not use detail_rows unless the user asks for list/detail rows.",
             "- Use current-day datasets production_today and wip_today for 오늘/현재 unless the question asks 어제/history.",
             "- Use target for 목표/계획. target DATE format is YYYY-MM-DD.",
             "- For 작업대기 Lot 수량 use lot_status, LOT_STAT_CD=WAITING, and LOT_ID nunique.",

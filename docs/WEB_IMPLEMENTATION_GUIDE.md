@@ -48,6 +48,7 @@ Browser UI
 | Flow | 폴더 | Web 관점의 역할 |
 | --- | --- | --- |
 | Main query/analysis | `langflow_components/main_flow/` | 질문, state, metadata를 받아 retrieval, pandas, 답변, next state 생성 |
+| Metadata QA front branch | `langflow_components/metadata_qa_flow/` | 인사/도움말, 데이터 목록, dataset 쿼리/예시, domain 등록 정보 질문을 분석 전에 직접 답변 |
 | Data retrieval | `langflow_components/data_retrieval_flow/` | `source_type`별 조회 결과를 `retrieval_payload`로 병합 |
 | Domain authoring | `langflow_components/domain_authoring_flow/` | domain 용어/규칙을 자연어에서 MongoDB item으로 저장 |
 | Table catalog authoring | `langflow_components/table_catalog_authoring_flow/` | dataset/source/column/filter mapping을 자연어에서 저장 |
@@ -78,6 +79,8 @@ Chat Input
 -> 00 Request State Loader
 -> 01 MongoDB Data Loader
 -> 02 Metadata Context Loader
+-> 00 Metadata Question Router
+-> 01 Metadata QA Response Builder
 -> 03 Intent Prompt Builder
 -> Gemini/LLM Intent JSON
 -> 04 Intent Plan Normalizer
@@ -92,15 +95,22 @@ Chat Input
 -> 10 Answer Response Builder
 -> 11 Answer Message Adapter
 -> Chat Output
+
+parallel:
+10 Answer Response Builder
+-> 12 Main Flow API Response Builder
+-> API/Data Output
 ```
 
 Web에서 중요한 차이:
 
 - `08 MongoDB Data Store`가 pandas 직후 `runtime_sources` 원본 rows와 `analysis.rows` 결과 rows를 `MONGODB_RESULT_COLLECTION`에 저장하고 preview row와 `data_ref`로 축약한다.
+- `metadata_qa_flow`가 `direct_response_ready=true`를 만든 질문은 데이터 retrieval/pandas 저장 대상이 아니며, 기존 main flow 노드는 payload를 pass-through한다.
 - `10 Answer Response Builder`의 `payload_out`이 답변, 표, 적용 scope, next `state`를 만들며, `analysis.data_ref`를 `data.data_ref`와 `state.current_data.data_ref`로 이어받는다.
 - `11 Answer Message Adapter`는 Langflow Playground/Chat Output용 Markdown message만 만든다. Web API의 표준 JSON으로 파싱하지 않는다.
-- Web backend는 가능하면 `10 Answer Response Builder.payload_out`을 표준 main flow response로 사용한다.
-- Langflow Run API가 final Chat Output만 반환하는 운영 방식이라면, main flow 끝에 얇은 `Main Flow API Response Builder` 또는 Data Output을 추가해 `payload_out`을 노출한다. 이 node는 새 비즈니스 로직을 만들지 말고 payload projection만 해야 한다.
+- Web backend는 `12 Main Flow API Response Builder.api_response`를 표준 main flow response로 사용한다.
+- Langflow Run API가 text/message 포트만 반환하는 운영 방식이면 `12 Main Flow API Response Builder.api_message`의 JSON 문자열을 파싱한다.
+- `12` node는 새 비즈니스 로직을 만들지 않고 `10.payload_out`의 projection만 수행한다.
 
 Main flow 입력:
 
@@ -437,6 +447,8 @@ WEB_SESSION_STORE=mongodb
 WEB_PENDING_AUTHORING_COLLECTION=agent_v2_pending_authoring
 ```
 
+`web_app.langflow_client`는 `LANGFLOW_BASE_URL + *_FLOW_ID`로 `/api/v1/run/{flow_id}` URL을 만들고, 이미 wrapper URL이 있으면 `LANGFLOW_MAIN_API_URL`, `LANGFLOW_DOMAIN_AUTHORING_API_URL`, `LANGFLOW_TABLE_CATALOG_AUTHORING_API_URL`, `LANGFLOW_MAIN_FILTER_AUTHORING_API_URL`을 우선 사용한다. 기존 단일 main URL 이름인 `LANGFLOW_API_URL`도 main flow fallback으로 읽는다.
+
 `MONGODB_RESULT_COLLECTION`은 metadata가 아니라 query result row 저장소다. `08 MongoDB Data Store`는 pandas 직후 source rows와 result rows를 저장하고, `01 MongoDB Data Loader`는 다음 turn의 compact state를 preview/summary로 복원할 때 사용한다. 이전 결과 전체 rows가 필요한 후속 분석은 04 이후 두 번째 loader 인스턴스의 `hydrate_mode=auto`가 full hydrate로 전환한다.
 
 ## 7. 화면 구성
@@ -606,7 +618,7 @@ Backend 처리:
 
 1. `session_id`로 이전 `state` 조회.
 2. Langflow main flow 호출.
-3. `10 Answer Response Builder.payload_out`의 compacted payload를 읽는다.
+3. `12 Main Flow API Response Builder.api_response`의 compacted payload를 읽는다.
 4. 응답의 `state`를 session store에 저장.
 5. 화면용 response 반환.
 
@@ -684,7 +696,7 @@ Authoring flow에 전달할 값:
 
 Parsing 원칙:
 
-- Main flow: `10 Answer Response Builder.payload_out`를 우선 사용한다. 이 payload는 앞단 `08 MongoDB Data Store`가 만든 `analysis.data_ref`를 `data/state`에 이어받은 상태다.
+- Main flow: `12 Main Flow API Response Builder.api_response`를 우선 사용한다. 이 payload는 `10 Answer Response Builder.payload_out`에서 답변, preview data, `data_ref`, state만 projection한 상태다.
 - Authoring flow: `08 ... Response Builder.api_response`만 사용한다.
 - `11 Answer Message Adapter.message`와 authoring `message`는 사람이 보는 Markdown/text다. JSON 계약으로 파싱하지 않는다.
 - Langflow wrapper가 response를 여러 겹 감싸더라도 backend parser는 대상 output name을 찾아 꺼낸다.
@@ -783,7 +795,8 @@ Pending record에 저장하지 않을 값:
 ## 15. Web 검증 체크리스트
 
 - main query flow가 정상 호출되는가
-- `10 Answer Response Builder.payload_out`의 compacted payload를 JSON으로 받을 수 있는가
+- `12 Main Flow API Response Builder.api_response`의 compacted payload를 JSON으로 받을 수 있는가
+- text/message 포트만 받을 때 `12.api_message` JSON 문자열 fallback을 파싱하는가
 - `11 Answer Message Adapter.message`를 API JSON으로 오인하지 않는가
 - session별 follow-up 질문이 유지되는가
 - `state.current_data.data_ref`가 다음 질문 전에 preview/summary로 복원되고, full rows가 초반 payload에 불필요하게 붙지 않는가

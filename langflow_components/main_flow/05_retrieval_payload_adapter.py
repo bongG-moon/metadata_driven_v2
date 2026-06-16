@@ -11,6 +11,8 @@ from lfx.schema.message import Message
 
 def adapt_retrieval_payload(main_payload_value: Any, retrieval_payload_value: Any) -> dict[str, Any]:
     main_payload = _payload(main_payload_value)
+    if main_payload.get("direct_response_ready"):
+        return main_payload
     retrieval_wrapper = _payload(retrieval_payload_value)
     retrieval_payload = (
         retrieval_wrapper.get("retrieval_payload")

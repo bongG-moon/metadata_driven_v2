@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from copy import deepcopy
 from pathlib import Path
@@ -30,6 +31,10 @@ class MockApiClient:
             raise ValueError("question is empty")
         session = str(session_id or "demo-session")
         previous_state = deepcopy(state if state is not None else self.sessions.get(session, DEFAULT_SESSION_STATE))
+        metadata_qa = self._try_metadata_qa_query(text, session, previous_state)
+        if metadata_qa:
+            self.sessions[session] = deepcopy(metadata_qa.get("state") or DEFAULT_SESSION_STATE)
+            return metadata_qa
         payload = run_agent(text, state=previous_state, session_id=session, root=str(self.root), request_date=DEFAULT_REQUEST_DATE)
         compacted = self._compact_query_payload(payload, session)
         self.sessions[session] = deepcopy(compacted.get("state") or DEFAULT_SESSION_STATE)
@@ -170,6 +175,77 @@ class MockApiClient:
             "result": result,
         }
 
+    def _try_metadata_qa_query(self, question: str, session_id: str, previous_state: dict[str, Any]) -> dict[str, Any] | None:
+        catalog = _load_json(self.root / "metadata" / "table_catalog.json").get("datasets", {})
+        domain = _load_json(self.root / "metadata" / "domain_items.json")
+        route = _mock_metadata_route(question, catalog)
+        if route["route"] == "data_analysis":
+            return None
+        data, answer = _mock_metadata_qa_answer(route, catalog, domain)
+        metadata_qa = {
+            "handled": True,
+            "route": route["route"],
+            "metadata_action": route["metadata_action"],
+            "target_dataset": route.get("target_dataset", ""),
+            "target_family": route.get("target_family", ""),
+            "target_term": route.get("target_term", ""),
+            "confidence": route.get("confidence", "medium"),
+            "reason": route.get("reason", ""),
+        }
+        datasets = _scope_datasets(data)
+        applied_scope = {
+            "intent_type": "metadata_lookup" if route["route"] == "metadata_qa" else "direct_answer",
+            "analysis_kind": route["metadata_action"] or "none",
+            "datasets": datasets,
+            "source_aliases": [],
+            "step_ids": [],
+            "filters_by_source": {},
+            "params_by_source": {},
+            "metadata_refs": {"api_mode": "python_mock"},
+        }
+        intent_plan = {
+            "route": route["route"],
+            "intent_type": applied_scope["intent_type"],
+            "analysis_kind": applied_scope["analysis_kind"],
+            "datasets": datasets,
+            "source_aliases": [],
+            "metadata_action": route["metadata_action"],
+            "target_dataset": route.get("target_dataset", ""),
+            "target_family": route.get("target_family", ""),
+            "target_term": route.get("target_term", ""),
+            "step_plan": [],
+            "reasoning_steps": [route.get("reason") or "Python mock metadata QA route"],
+        }
+        result = {
+            "status": "ok",
+            "success": True,
+            "response_type": "metadata_qa",
+            "direct_response_ready": True,
+            "answer_message": answer,
+            "data": data,
+            "applied_scope": applied_scope,
+            "intent_plan": intent_plan,
+            "metadata_route": route,
+            "metadata_qa": metadata_qa,
+            "analysis": {
+                "status": "ok",
+                "analysis_kind": applied_scope["analysis_kind"],
+                "columns": data.get("columns", []),
+                "rows": data.get("rows", []),
+                "row_count": data.get("row_count", 0),
+                "reasoning_steps": intent_plan["reasoning_steps"],
+                "safety_passed": True,
+                "executed": False,
+                "errors": [],
+            },
+            "state": _metadata_qa_state(previous_state, question, answer, metadata_qa),
+            "warnings": [],
+            "errors": [],
+            "api_mode": "python_mock",
+            "result_collection_name": "agent_v2_result_store",
+        }
+        return result
+
     def _compact_query_payload(self, payload: dict[str, Any], session_id: str) -> dict[str, Any]:
         result = deepcopy(payload)
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
@@ -254,6 +330,257 @@ def _normalize_metadata_type(value: str) -> str:
 def _normalize_duplicate_action(value: str) -> str:
     text = str(value or "ask").strip().lower()
     return text if text in {"ask", "merge", "replace", "skip", "create_new"} else "ask"
+
+
+CATALOG_LIST_CUES = ("데이터 목록", "data list", "조회 가능한 data", "조회 가능한 데이터", "사용 가능한 데이터", "등록된 데이터")
+DATASET_QUERY_CUES = ("쿼리", "query", "sql", "조회문")
+DATASET_EXAMPLE_CUES = ("활용 예시", "예시 질문", "질문 예시", "어떤 질문", "무슨 질문", "뭘 물어")
+DATASET_DETAIL_CUES = ("데이터 정보", "dataset 정보", "상세 정보", "컬럼", "필터", "기준일", "source", "소스")
+DOMAIN_SEARCH_CUES = ("관련 등록 정보", "등록된 정보", "등록 정보", "도메인", "정의", "조건", "의미")
+HELP_CUES = ("도움말", "사용법", "뭐 할 수", "무엇을 할 수", "help", "기능")
+GREETING_WORDS = ("안녕", "안녕하세요", "하이", "hello", "hi")
+
+
+def _mock_metadata_route(question: str, catalog: dict[str, Any]) -> dict[str, Any]:
+    dataset_match = _match_dataset(question, catalog)
+    route = "data_analysis"
+    action = ""
+    confidence = "medium"
+    reason = "일반 데이터 분석 질문으로 판단했습니다."
+    target_term = ""
+    if _is_greeting(question):
+        route, action, confidence, reason = "direct_answer", "greeting", "high", "인사 또는 짧은 대화형 입력입니다."
+    elif _contains_any(question, CATALOG_LIST_CUES):
+        route, action, confidence, reason = "metadata_qa", "catalog_list", "high", "등록된 데이터 목록을 요청했습니다."
+    elif _contains_any(question, DATASET_QUERY_CUES):
+        route, action = "metadata_qa", "dataset_query"
+        confidence = "high" if dataset_match.get("target_dataset") else "medium"
+        reason = "특정 데이터셋의 조회 쿼리/SQL 정보를 요청했습니다."
+    elif _contains_any(question, DATASET_EXAMPLE_CUES):
+        route, action = "metadata_qa", "dataset_examples"
+        confidence = "high" if dataset_match.get("target_dataset") or dataset_match.get("target_family") else "medium"
+        reason = "데이터셋별 활용 예시 질문을 요청했습니다."
+    elif dataset_match.get("target_dataset") and _contains_any(question, DATASET_DETAIL_CUES):
+        route, action, confidence, reason = "metadata_qa", "dataset_detail", "high", "특정 데이터셋의 등록 상세 정보를 요청했습니다."
+    elif _contains_any(question, HELP_CUES) and not dataset_match.get("target_dataset"):
+        route, action, confidence, reason = "direct_answer", "help", "high", "에이전트 사용법 또는 기능 안내를 요청했습니다."
+    elif _contains_any(question, DOMAIN_SEARCH_CUES):
+        route, action = "metadata_qa", "domain_search"
+        reason = "도메인 메타데이터에서 관련 등록 정보를 찾아야 하는 질문입니다."
+        target_term = _extract_domain_term(question, dataset_match)
+    elif dataset_match.get("target_dataset") and _contains_any(question, ("정보", "상세")):
+        route, action, reason = "metadata_qa", "dataset_detail", "특정 데이터셋 정보 확인 질문으로 판단했습니다."
+    return {
+        "route": route,
+        "metadata_action": action,
+        "target_dataset": dataset_match.get("target_dataset", ""),
+        "target_family": dataset_match.get("target_family", ""),
+        "target_term": target_term,
+        "confidence": confidence,
+        "reason": reason,
+        "dataset_matches": dataset_match.get("matches", []),
+    }
+
+
+def _mock_metadata_qa_answer(route: dict[str, Any], catalog: dict[str, Any], domain: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    action = route.get("metadata_action")
+    selected = _select_datasets(route, catalog)
+    if action == "catalog_list":
+        rows = [_catalog_row(key, item) for key, item in sorted(catalog.items()) if isinstance(item, dict)]
+        answer = f"현재 등록된 조회 가능 데이터는 {len(rows)}개입니다. 특정 데이터의 활용 예시는 `production_today 활용 예시 알려줘`처럼 물어보면 됩니다."
+        return _metadata_table(rows), answer
+    if action == "dataset_query":
+        if not selected:
+            rows = [{"DATASET_KEY": key, "DISPLAY_NAME": item.get("display_name", "")} for key, item in sorted(catalog.items()) if isinstance(item, dict)]
+            return _metadata_table(rows), "어떤 데이터셋의 조회 쿼리문이 필요한지 dataset_key를 함께 알려주세요."
+        rows = []
+        sections = []
+        for key, item in selected:
+            source_config = item.get("source_config") if isinstance(item.get("source_config"), dict) else {}
+            query = str(source_config.get("query_template") or "")
+            rows.append({"DATASET_KEY": key, "DB_KEY": source_config.get("db_key", ""), "SOURCE_TYPE": item.get("source_type", ""), "QUERY_TEMPLATE": query})
+            sections.append(f"### {key}\n```sql\n{query}\n```")
+        return _metadata_table(rows), "\n\n".join(sections)
+    if action == "dataset_examples":
+        if not selected:
+            rows = [{"DATASET_KEY": key, "DISPLAY_NAME": item.get("display_name", "")} for key, item in sorted(catalog.items()) if isinstance(item, dict)]
+            return _metadata_table(rows), "어떤 데이터의 활용 예시가 필요한지 dataset_key를 함께 알려주세요."
+        rows = []
+        for key, item in selected:
+            for example in _examples_for_dataset(key, item):
+                rows.append({"DATASET_KEY": key, "EXAMPLE_QUESTION": example})
+        return _metadata_table(rows), f"{selected[0][0]} 활용 예시는 아래처럼 물어볼 수 있습니다."
+    if action == "dataset_detail":
+        if not selected:
+            rows = [{"DATASET_KEY": key, "DISPLAY_NAME": item.get("display_name", "")} for key, item in sorted(catalog.items()) if isinstance(item, dict)]
+            return _metadata_table(rows), "어떤 데이터셋의 상세 정보가 필요한지 dataset_key를 함께 알려주세요."
+        rows = [_catalog_row(key, item) for key, item in selected]
+        return _metadata_table(rows), f"{selected[0][0]} 등록 정보입니다."
+    if action == "domain_search":
+        rows = _domain_search_rows(domain, route.get("target_term") or route.get("reason") or "")
+        if rows:
+            return _metadata_table(rows), f"도메인 metadata에서 {len(rows)}개 관련 정보를 찾았습니다."
+        return _metadata_table([]), "관련 domain metadata를 찾지 못했습니다. 다른 표현이나 key로 다시 검색해 주세요."
+    rows = [{"QUESTION_TYPE": "metadata", "EXAMPLE": item} for item in ("현재 조회 가능한 DATA LIST 알려줘", "production_today 활용 예시 알려줘", "AUTO향 관련 등록 정보 알려줘")]
+    intro = "안녕하세요. 제조 데이터 분석과 등록된 메타데이터 조회를 도와드릴 수 있습니다." if action == "greeting" else "사용 가능한 질문 유형을 안내드릴게요."
+    return _metadata_table(rows), intro
+
+
+def _metadata_qa_state(previous_state: dict[str, Any], question: str, answer: str, metadata_qa: dict[str, Any]) -> dict[str, Any]:
+    state = deepcopy(previous_state if isinstance(previous_state, dict) else DEFAULT_SESSION_STATE)
+    history = list(state.get("chat_history", [])) if isinstance(state.get("chat_history"), list) else []
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
+    state["chat_history"] = history[-10:]
+    context = deepcopy(state.get("context", {})) if isinstance(state.get("context"), dict) else {}
+    context["last_route"] = "metadata_qa"
+    context["last_metadata_action"] = metadata_qa.get("metadata_action")
+    if metadata_qa.get("target_dataset"):
+        context["last_metadata_dataset"] = metadata_qa["target_dataset"]
+    if metadata_qa.get("target_term"):
+        context["last_metadata_term"] = metadata_qa["target_term"]
+    state["context"] = context
+    state.setdefault("current_data", {})
+    return state
+
+
+def _match_dataset(question: str, catalog: dict[str, Any]) -> dict[str, Any]:
+    q_lower = question.lower()
+    q_norm = _normalize_text(question)
+    matches: list[dict[str, Any]] = []
+    for key, item in catalog.items():
+        if not isinstance(item, dict):
+            continue
+        display = str(item.get("display_name") or "")
+        if str(key).lower() in q_lower or _normalize_text(key) in q_norm or (display and (display.lower() in q_lower or _normalize_text(display) in q_norm)):
+            matches.append({"dataset_key": key, "display_name": display, "match_type": "dataset"})
+    target_dataset = matches[0]["dataset_key"] if matches else ""
+    target_family = str((catalog.get(target_dataset) or {}).get("dataset_family") or "") if target_dataset else ""
+    if not target_family:
+        for family, keywords in {
+            "production": ("생산", "실적", "production"),
+            "wip": ("재공", "wip"),
+            "target": ("목표", "계획", "target"),
+            "lot": ("lot", "롯"),
+            "equipment": ("장비", "설비", "equipment", "eqp"),
+        }.items():
+            if _contains_any(question, keywords):
+                target_family = family
+                matches.append({"dataset_family": family, "match_type": "family"})
+                break
+    return {"target_dataset": target_dataset, "target_family": target_family, "matches": matches[:5]}
+
+
+def _select_datasets(route: dict[str, Any], catalog: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    target_dataset = str(route.get("target_dataset") or "")
+    target_family = str(route.get("target_family") or "")
+    if target_dataset and isinstance(catalog.get(target_dataset), dict):
+        return [(target_dataset, catalog[target_dataset])]
+    if target_family:
+        return [(key, item) for key, item in sorted(catalog.items()) if isinstance(item, dict) and item.get("dataset_family") == target_family]
+    return []
+
+
+def _catalog_row(key: str, item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "DATASET_KEY": key,
+        "DISPLAY_NAME": item.get("display_name", ""),
+        "DATASET_FAMILY": item.get("dataset_family", ""),
+        "SOURCE_TYPE": item.get("source_type", ""),
+        "DATE_SCOPE": item.get("date_scope", ""),
+        "QUANTITY_COLUMN": item.get("primary_quantity_column", ""),
+        "REQUIRED_PARAMS": ", ".join(str(value) for value in item.get("required_params", []) if str(value or "").strip()) if isinstance(item.get("required_params"), list) else "",
+    }
+
+
+def _examples_for_dataset(key: str, item: dict[str, Any]) -> list[str]:
+    family = str(item.get("dataset_family") or "")
+    quantity = str(item.get("primary_quantity_column") or "수량")
+    if family == "production":
+        return [f"오늘 DA공정 {quantity}을 제품별로 보여줘", f"{key}에서 생산 상위 5개 제품 알려줘", f"WB공정 {key} 실적을 보여줘"]
+    if family == "wip":
+        return [f"현재 DA에서 재공이 가장 많은 제품 알려줘", f"{key} 재공 상위 10개 알려줘", f"WB공정 재공을 제품별로 보여줘"]
+    return [f"{key} 데이터로 주요 현황 보여줘", f"{key} 상세 정보 알려줘", f"{key} 활용 예시 알려줘"]
+
+
+def _domain_search_rows(domain: dict[str, Any], term: str) -> list[dict[str, Any]]:
+    needle = _normalize_text(term)
+    rows: list[dict[str, Any]] = []
+    for section, values in domain.items():
+        if not isinstance(values, dict):
+            continue
+        for key, payload in values.items():
+            haystack = _normalize_text(json.dumps({"section": section, "key": key, "payload": payload}, ensure_ascii=False, default=str))
+            if needle and needle not in haystack and not any(_normalize_text(alias) in haystack for alias in str(term).split()):
+                continue
+            rows.append(
+                {
+                    "SECTION": section,
+                    "KEY": key,
+                    "DISPLAY_NAME": _payload_display_name(payload, key),
+                    "ALIASES": ", ".join(_payload_aliases(payload)[:6]),
+                    "PAYLOAD": json.dumps(payload, ensure_ascii=False, default=str),
+                }
+            )
+    return rows[:20]
+
+
+def _metadata_table(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    cleaned_rows = [{str(key): _compact_metadata_value(value) for key, value in row.items()} for row in rows]
+    columns: list[str] = []
+    for row in cleaned_rows:
+        for key in row:
+            if key not in columns:
+                columns.append(str(key))
+    return {"columns": columns, "rows": cleaned_rows, "row_count": len(cleaned_rows), "data_ref": {}}
+
+
+def _compact_metadata_value(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item) for item in value)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return str(value)
+
+
+def _scope_datasets(data: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    for row in data.get("rows", []) if isinstance(data.get("rows"), list) else []:
+        key = row.get("DATASET_KEY") if isinstance(row, dict) else None
+        if key and str(key) not in result:
+            result.append(str(key))
+    return result
+
+
+def _extract_domain_term(question: str, dataset_match: dict[str, Any]) -> str:
+    text = question
+    for match in dataset_match.get("matches", []):
+        for key in ("dataset_key", "display_name", "dataset_family"):
+            value = str(match.get(key) or "")
+            if value:
+                text = re.sub(re.escape(value), " ", text, flags=re.IGNORECASE)
+    for term in ("관련해서", "관련된", "관련", "등록된", "등록", "정보", "알려줘", "보여줘", "도메인", "정의", "조건", "의미", "에 대해", "대해", "와", "과", "은", "는", "이", "가", "?"):
+        text = text.replace(term, " ")
+    return " ".join(part for part in re.split(r"\s+", text.strip()) if part)[:80]
+
+
+def _is_greeting(question: str) -> bool:
+    cleaned = re.sub(r"[\s!?.,~]+", "", question.strip().lower())
+    return bool(cleaned) and (cleaned in GREETING_WORDS or (len(cleaned) <= 8 and any(cleaned.startswith(word) for word in GREETING_WORDS)))
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    lower = text.lower()
+    normalized = _normalize_text(text)
+    return any(str(needle).lower() in lower or _normalize_text(needle) in normalized for needle in needles if str(needle or "").strip())
+
+
+def _normalize_text(text: Any) -> str:
+    return re.sub(r"[\s\-_/.]+", "", str(text or "").lower())
 
 
 def _build_authoring_items(metadata_type: str, text: str) -> list[dict[str, Any]]:

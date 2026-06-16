@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import types
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_component(path: str):
+    component_path = ROOT / path
+    spec = importlib.util.spec_from_file_location(component_path.stem, component_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_metadata_qa_lists_catalog_without_expanding_examples(monkeypatch: Any) -> None:
+    router = load_component("langflow_components/metadata_qa_flow/00_metadata_question_router.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/01_metadata_qa_response_builder.py")
+    api_builder = load_component("langflow_components/main_flow/12_api_response_builder.py")
+
+    payload = seed_payload("현재 조회 가능한 DATA LIST를 알려줄래?", monkeypatch)
+    routed = router.route_metadata_question(payload)
+    result = response_builder.build_metadata_qa_response(routed)
+    api_response = api_builder.build_main_flow_api_response(result)["api_response"]
+
+    assert routed["metadata_route"]["route"] == "metadata_qa"
+    assert routed["metadata_route"]["metadata_action"] == "catalog_list"
+    assert result["direct_response_ready"] is True
+    assert result["data"]["row_count"] >= 5
+    assert "production_today" in {row["DATASET_KEY"] for row in result["data"]["rows"]}
+    assert "활용 예시 알려줘" in result["answer_message"]
+    assert "오늘 DA공정 생산량을 제품별로 보여줘" not in result["answer_message"]
+    assert api_response["success"] is True
+    assert api_response["intent"]["analysis_kind"] == "catalog_list"
+
+
+def test_metadata_qa_shows_examples_for_requested_dataset(monkeypatch: Any) -> None:
+    router = load_component("langflow_components/metadata_qa_flow/00_metadata_question_router.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/01_metadata_qa_response_builder.py")
+
+    payload = seed_payload("production_today 활용 예시 알려줘", monkeypatch)
+    result = response_builder.build_metadata_qa_response(router.route_metadata_question(payload))
+
+    assert result["metadata_qa"]["metadata_action"] == "dataset_examples"
+    assert result["metadata_qa"]["target_dataset"] == "production_today"
+    assert result["data"]["row_count"] >= 3
+    assert all(row["DATASET_KEY"] == "production_today" for row in result["data"]["rows"])
+    assert "production_today 활용 예시" in result["answer_message"]
+
+
+def test_metadata_qa_returns_registered_query_template(monkeypatch: Any) -> None:
+    router = load_component("langflow_components/metadata_qa_flow/00_metadata_question_router.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/01_metadata_qa_response_builder.py")
+
+    payload = seed_payload("production_today 조회 쿼리문 알려줘", monkeypatch)
+    result = response_builder.build_metadata_qa_response(router.route_metadata_question(payload))
+
+    assert result["metadata_qa"]["metadata_action"] == "dataset_query"
+    assert "```sql" in result["answer_message"]
+    assert "FROM PRODUCTION_TODAY" in result["answer_message"]
+    assert result["data"]["rows"][0]["DB_KEY"] == "PNT_RPT"
+
+
+def test_metadata_qa_searches_domain_items(monkeypatch: Any) -> None:
+    router = load_component("langflow_components/metadata_qa_flow/00_metadata_question_router.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/01_metadata_qa_response_builder.py")
+
+    payload = seed_payload("AUTO향 관련 등록 정보 알려줘", monkeypatch)
+    result = response_builder.build_metadata_qa_response(router.route_metadata_question(payload))
+
+    assert result["metadata_qa"]["metadata_action"] == "domain_search"
+    assert any(row["SECTION"] == "product_terms" and row["KEY"] == "automotive" for row in result["data"]["rows"])
+    assert "automotive" in result["answer_message"]
+
+
+def test_metadata_qa_does_not_overwrite_previous_current_data(monkeypatch: Any) -> None:
+    router = load_component("langflow_components/metadata_qa_flow/00_metadata_question_router.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/01_metadata_qa_response_builder.py")
+
+    previous_current_data = {
+        "columns": ["MODE", "WIP"],
+        "rows": [{"MODE": "LPDDR5", "WIP": 10}],
+        "row_count": 1,
+        "product_key_columns": ["MODE"],
+        "product_key_values": [{"MODE": "LPDDR5"}],
+    }
+    payload = seed_payload(
+        "현재 조회 가능한 데이터 목록 알려줘",
+        monkeypatch,
+        state={"current_data": previous_current_data},
+    )
+    result = response_builder.build_metadata_qa_response(router.route_metadata_question(payload))
+
+    assert result["state"]["current_data"] == previous_current_data
+    assert result["state"]["context"]["last_route"] == "metadata_qa"
+
+
+def test_metadata_qa_passes_analysis_question_to_existing_flow(monkeypatch: Any) -> None:
+    router = load_component("langflow_components/metadata_qa_flow/00_metadata_question_router.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/01_metadata_qa_response_builder.py")
+
+    payload = seed_payload("오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성률을 보여줘", monkeypatch)
+    routed = router.route_metadata_question(payload)
+    result = response_builder.build_metadata_qa_response(routed)
+
+    assert routed["metadata_route"]["route"] == "data_analysis"
+    assert "direct_response_ready" not in result
+    assert result["request"]["question"] == payload["request"]["question"]
+
+
+def test_direct_metadata_response_passes_through_downstream_nodes(monkeypatch: Any) -> None:
+    router = load_component("langflow_components/metadata_qa_flow/00_metadata_question_router.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/01_metadata_qa_response_builder.py")
+    intent_prompt_builder = load_component("langflow_components/main_flow/03_intent_prompt_builder.py")
+    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    retrieval_adapter = load_component("langflow_components/main_flow/05_retrieval_payload_adapter.py")
+    pandas_prompt_builder = load_component("langflow_components/main_flow/06_pandas_prompt_builder.py")
+    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    data_store = load_component("langflow_components/main_flow/08_mongodb_data_store.py")
+    answer_prompt_builder = load_component("langflow_components/main_flow/09_answer_prompt_builder.py")
+    answer_builder = load_component("langflow_components/main_flow/10_answer_response_builder.py")
+
+    payload = seed_payload("production_today 조회 쿼리문 알려줘", monkeypatch)
+    payload = response_builder.build_metadata_qa_response(router.route_metadata_question(payload))
+    original_answer = payload["answer_message"]
+
+    assert intent_prompt_builder.build_intent_prompt_payload(payload)["prompt_type"] == "direct_response_skip"
+    payload = intent_normalizer.normalize_intent_payload(payload, '{"intent_type":"wrong"}')
+    payload = retrieval_adapter.adapt_retrieval_payload(payload, {"retrieval_payload": {"source_results": []}})
+    assert pandas_prompt_builder.build_pandas_prompt_payload(payload)["prompt_type"] == "direct_response_skip"
+    payload = pandas_executor.execute_pandas_from_llm(payload, "{}")
+    payload = data_store.store_payload_in_mongodb(payload, enabled="true")
+    assert payload["mongo_data_store"]["stored"] is False
+    assert answer_prompt_builder.build_answer_prompt_payload(payload)["prompt_type"] == "direct_response_skip"
+    payload = answer_builder.build_answer_response_payload(payload, "LLM이 다른 답을 해도 무시")
+
+    assert payload["answer_message"] == original_answer
+    assert payload["direct_response_ready"] is True
+
+
+def seed_payload(question: str, monkeypatch: Any, state: dict[str, Any] | None = None) -> dict[str, Any]:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
+    payload = request_loader.build_request_payload(question, "test-session", state=state or {})
+    install_fake_pymongo(monkeypatch, seed_metadata_docs())
+    return metadata_loader.load_metadata_payload(
+        payload,
+        mongo_uri="mongodb://fake",
+        mongo_database="metadata_driven_agent_v2",
+        domain_collection_name="agent_v2_domain_items",
+        table_catalog_collection_name="agent_v2_table_catalog_items",
+        main_flow_filter_collection_name="agent_v2_main_flow_filters",
+    )
+
+
+def seed_metadata_docs() -> dict[str, list[dict[str, Any]]]:
+    domain = read_metadata_json("domain_items.json")
+    table_catalog = read_metadata_json("table_catalog.json")
+    filters = read_metadata_json("main_flow_filters.json")
+    domain_docs: list[dict[str, Any]] = []
+    for section, value in domain.items():
+        if section == "product_key_columns":
+            domain_docs.append({"section": section, "key": section, "columns": value})
+        elif isinstance(value, dict):
+            for key, payload in value.items():
+                domain_docs.append({"section": section, "key": key, "payload": payload})
+    table_docs = [
+        {"dataset_key": key, "payload": payload}
+        for key, payload in (table_catalog.get("datasets") or {}).items()
+    ]
+    filter_docs = [{"filter_key": key, "payload": payload} for key, payload in filters.items()]
+    return {
+        "agent_v2_domain_items": domain_docs,
+        "agent_v2_table_catalog_items": table_docs,
+        "agent_v2_main_flow_filters": filter_docs,
+    }
+
+
+def read_metadata_json(filename: str) -> dict[str, Any]:
+    return json.loads((ROOT / "metadata" / filename).read_text(encoding="utf-8"))
+
+
+class FakeCursor(list):
+    def limit(self, value: int) -> "FakeCursor":
+        return FakeCursor(self[:value])
+
+
+class FakeCollection:
+    def __init__(self, docs: list[dict[str, Any]]) -> None:
+        self.docs = docs
+
+    def find(self, query: dict[str, Any]) -> FakeCursor:
+        return FakeCursor(self.docs)
+
+
+class FakeDatabase:
+    def __init__(self, docs_by_collection: dict[str, list[dict[str, Any]]]) -> None:
+        self.docs_by_collection = docs_by_collection
+
+    def __getitem__(self, collection_name: str) -> FakeCollection:
+        return FakeCollection(self.docs_by_collection.get(collection_name, []))
+
+
+class FakeClient:
+    def __init__(self, docs_by_collection: dict[str, list[dict[str, Any]]]) -> None:
+        self.docs_by_collection = docs_by_collection
+
+    def __getitem__(self, database_name: str) -> FakeDatabase:
+        return FakeDatabase(self.docs_by_collection)
+
+    def close(self) -> None:
+        return None
+
+
+def install_fake_pymongo(monkeypatch: Any, docs_by_collection: dict[str, list[dict[str, Any]]]) -> None:
+    def mongo_client(*args: Any, **kwargs: Any) -> FakeClient:
+        return FakeClient(docs_by_collection)
+
+    monkeypatch.setitem(sys.modules, "pymongo", types.SimpleNamespace(MongoClient=mongo_client))

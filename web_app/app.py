@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from .langflow_client import LangflowApiClient, LangflowSettings
 from .mock_api import MockApiClient
 from .ui_helpers import chat_dataframe_height, compact_json_html, display_table_frame, json_text, safe_markdown_text
 
@@ -35,6 +36,8 @@ QUERY_EXAMPLES = [
     "현재 da에서 재공이 가장 많은 제품 알려줘",
     "이 제품에 할당된 장비 현황 알려줘",
     "오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성율을 보여줘",
+    "현재 조회 가능한 DATA LIST 알려줘",
+    "production_today 조회 쿼리문 알려줘",
 ]
 AUTHORING_EXAMPLES = {
     "domain": "W/B공정은 W/B1부터 W/B6까지야. 재공 수량은 WIP 컬럼을 합산해.",
@@ -61,6 +64,8 @@ def main() -> None:
 def ensure_state() -> None:
     if "mock_api" not in st.session_state:
         st.session_state.mock_api = MockApiClient()
+    if "langflow_api" not in st.session_state:
+        st.session_state.langflow_api = LangflowApiClient()
     if "session_id" not in st.session_state:
         st.session_state.session_id = f"web-{uuid.uuid4().hex[:8]}"
     if "chat_messages" not in st.session_state:
@@ -72,6 +77,11 @@ def ensure_state() -> None:
 
 
 def render_sidebar() -> dict[str, Any]:
+    api_settings = LangflowSettings.from_env()
+    if getattr(st.session_state.langflow_api, "settings", None) != api_settings:
+        st.session_state.langflow_api = LangflowApiClient(api_settings)
+    configured = api_settings.configured_summary()
+    api_ready = configured["main"]
     st.sidebar.markdown(
         """
         <div class="sidebar-brand">
@@ -79,7 +89,7 @@ def render_sidebar() -> dict[str, Any]:
             <div class="sidebar-brand-mark">M2</div>
             <div>
               <div class="sidebar-brand-title">Metadata Agent</div>
-              <div class="sidebar-brand-subtitle">Python mock web console</div>
+              <div class="sidebar-brand-subtitle">Langflow-ready web console</div>
             </div>
           </div>
         </div>
@@ -88,12 +98,27 @@ def render_sidebar() -> dict[str, Any]:
     )
     page = st.sidebar.radio("Navigation", NAV_PAGES, label_visibility="collapsed", key="nav_page")
     st.sidebar.markdown('<div class="sidebar-section-label">Runtime</div>', unsafe_allow_html=True)
+    runtime_mode = st.sidebar.radio(
+        "Runtime mode",
+        ["Python mock", "Langflow API"],
+        index=0,
+        label_visibility="collapsed",
+        key="runtime_mode",
+    )
     st.sidebar.markdown(
-        """
+        f"""
         <div class="config-list">
           <div class="config-row">
-            <div><div class="config-label">API mode</div><div class="config-env">LANGFLOW_API_URL unavailable</div></div>
-            <span class="config-badge ok">Python mock</span>
+            <div><div class="config-label">Selected</div><div class="config-env">{html.escape(runtime_mode)}</div></div>
+            <span class="config-badge {'ok' if runtime_mode == 'Python mock' or api_ready else 'warn'}">{'Ready' if runtime_mode == 'Langflow API' and api_ready else 'Mock' if runtime_mode == 'Python mock' else 'Missing'}</span>
+          </div>
+          <div class="config-row">
+            <div><div class="config-label">Main API</div><div class="config-env">LANGFLOW_MAIN_API_URL / FLOW_ID</div></div>
+            <span class="config-badge {'ok' if configured['main'] else 'warn'}">{'set' if configured['main'] else 'empty'}</span>
+          </div>
+          <div class="config-row">
+            <div><div class="config-label">Authoring APIs</div><div class="config-env">domain/table/filter</div></div>
+            <span class="config-value">{sum(1 for value in configured.values() if value) - int(configured['main'])}/3</span>
           </div>
           <div class="config-row">
             <div><div class="config-label">Result store</div><div class="config-env">MONGODB_RESULT_COLLECTION</div></div>
@@ -103,6 +128,8 @@ def render_sidebar() -> dict[str, Any]:
         """,
         unsafe_allow_html=True,
     )
+    if runtime_mode == "Langflow API" and not api_ready:
+        st.sidebar.warning("Main Langflow API URL이 없어 질의는 실행할 수 없습니다. env 설정 전에는 Python mock을 사용하세요.")
     developer_mode = st.sidebar.toggle("개발자 정보 보기", value=True)
     number_mode = st.sidebar.selectbox("숫자 표시", ["comma", "k"], format_func=lambda item: "1,000" if item == "comma" else "1.0K")
     if st.sidebar.button("세션 초기화", width="stretch"):
@@ -110,12 +137,22 @@ def render_sidebar() -> dict[str, Any]:
         st.session_state.chat_messages = []
         st.session_state.latest_state = {}
         st.rerun()
-    return {"page": page, "developer_mode": developer_mode, "number_mode": number_mode}
+    return {
+        "page": page,
+        "developer_mode": developer_mode,
+        "number_mode": number_mode,
+        "runtime_mode": runtime_mode,
+        "api_ready": api_ready,
+        "api_settings": api_settings,
+    }
 
 
 def render_query_page(settings: dict[str, Any]) -> None:
     render_topbar("질의/분석", st.session_state.session_id)
-    st.caption("현재는 Langflow API 대신 Python mock API가 reference runtime을 호출합니다. 후속 질문 state와 data_ref 동작까지 화면에서 확인할 수 있습니다.")
+    if settings.get("runtime_mode") == "Langflow API":
+        st.caption("Langflow Run API 응답을 현재 웹 표준 shape로 정규화해서 표시합니다.")
+    else:
+        st.caption("Python mock API가 reference runtime을 호출합니다. 후속 질문 state와 data_ref 동작까지 화면에서 확인할 수 있습니다.")
 
     example_cols = st.columns(len(QUERY_EXAMPLES))
     for index, question in enumerate(QUERY_EXAMPLES):
@@ -140,19 +177,48 @@ def render_query_page(settings: dict[str, Any]) -> None:
     with st.chat_message("user", avatar=":material/person:"):
         st.markdown(safe_markdown_text(user_message))
     with st.chat_message("assistant", avatar=":material/smart_toy:"):
-        with st.spinner("Python mock API 실행 중..."):
-            result = st.session_state.mock_api.run_query(
-                user_message,
-                session_id=st.session_state.session_id,
-                state=st.session_state.latest_state or None,
-            )
+        with st.spinner("Langflow API 실행 중..." if settings.get("runtime_mode") == "Langflow API" else "Python mock API 실행 중..."):
+            result = run_query_backend(user_message, settings)
             st.session_state.latest_state = result.get("state", {})
         render_query_result(result, settings, "latest")
     st.session_state.chat_messages.append({"role": "assistant", "content": result.get("answer_message", ""), "result": result})
 
 
+def run_query_backend(user_message: str, settings: dict[str, Any]) -> dict[str, Any]:
+    try:
+        if settings.get("runtime_mode") == "Langflow API":
+            return st.session_state.langflow_api.run_query(
+                user_message,
+                session_id=st.session_state.session_id,
+                state=st.session_state.latest_state or None,
+            )
+        return st.session_state.mock_api.run_query(
+            user_message,
+            session_id=st.session_state.session_id,
+            state=st.session_state.latest_state or None,
+        )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "success": False,
+            "answer_message": f"실행 중 오류가 발생했습니다: {exc}",
+            "data": {"columns": [], "rows": [], "row_count": 0, "data_ref": {}},
+            "applied_scope": {},
+            "intent_plan": {},
+            "analysis": {"status": "error", "errors": [str(exc)]},
+            "state": st.session_state.latest_state or {},
+            "warnings": [],
+            "errors": [str(exc)],
+            "api_mode": settings.get("runtime_mode", "unknown"),
+        }
+
+
 def render_query_result(result: dict[str, Any], settings: dict[str, Any], key_prefix: str) -> None:
     st.markdown(safe_markdown_text(result.get("answer_message") or "응답 메시지가 없습니다."))
+    is_metadata_qa = bool(result.get("direct_response_ready") or result.get("response_type") == "metadata_qa" or result.get("metadata_qa"))
+    metadata_qa = result.get("metadata_qa") if isinstance(result.get("metadata_qa"), dict) else {}
+    if is_metadata_qa:
+        render_inline_status("Metadata QA", metadata_qa_label(metadata_qa), "success")
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     rows = data.get("rows") if isinstance(data.get("rows"), list) else []
     columns = data.get("columns") if isinstance(data.get("columns"), list) else []
@@ -180,31 +246,72 @@ def render_query_result(result: dict[str, Any], settings: dict[str, Any], key_pr
     if data_ref:
         with st.expander("전체 row data_ref", expanded=False):
             render_compact_json(data_ref)
-            full_rows = st.session_state.mock_api.get_rows(data_ref)
-            st.download_button(
-                "전체 row JSON 다운로드",
-                data=json_text(full_rows),
-                file_name=f"{data_ref.get('ref_id', 'rows')}.json",
-                mime="application/json",
-                key=f"{key_prefix}_download_rows",
-                width="stretch",
+            if result.get("api_mode") == "python_mock" or settings.get("runtime_mode") == "Python mock":
+                full_rows = st.session_state.mock_api.get_rows(data_ref)
+                st.download_button(
+                    "전체 row JSON 다운로드",
+                    data=json_text(full_rows),
+                    file_name=f"{data_ref.get('ref_id', 'rows')}.json",
+                    mime="application/json",
+                    key=f"{key_prefix}_download_rows",
+                    width="stretch",
+                )
+            else:
+                render_inline_status("전체 row", "Langflow API 모드에서는 backend가 이 data_ref로 MongoDB result store를 조회합니다.")
+                st.download_button(
+                    "data_ref JSON 다운로드",
+                    data=json_text(data_ref),
+                    file_name=f"{data_ref.get('ref_id', 'data_ref')}.json",
+                    mime="application/json",
+                    key=f"{key_prefix}_download_ref",
+                    width="stretch",
+                )
+    if is_metadata_qa:
+        tabs = st.tabs(["Metadata QA", "적용 Scope", "Intent", "Raw"])
+        with tabs[0]:
+            render_compact_json(
+                {
+                    "metadata_qa": metadata_qa,
+                    "metadata_route": result.get("metadata_route") or {},
+                    "analysis": {key: value for key, value in (result.get("analysis") or {}).items() if key != "rows"},
+                },
+                max_height=360,
             )
-    tabs = st.tabs(["적용 Scope", "Intent", "Pandas", "Raw"])
-    with tabs[0]:
-        render_compact_json(result.get("applied_scope") or {})
-    with tabs[1]:
-        render_compact_json(result.get("intent_plan") or {})
-    with tabs[2]:
-        analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
-        code = analysis.get("analysis_code") or (analysis.get("pandas_code_json") or {}).get("code", "")
-        if code:
-            st.code(str(code), language="python")
-        render_compact_json({key: value for key, value in analysis.items() if key not in {"rows", "analysis_code", "pandas_code_json"}})
-    with tabs[3]:
-        if settings.get("developer_mode"):
-            render_compact_json(result, max_height=520)
-        else:
-            render_inline_status("개발자 정보", "사이드바에서 개발자 정보 보기를 켜면 Raw payload를 볼 수 있습니다.")
+        with tabs[1]:
+            render_compact_json(result.get("applied_scope") or {})
+        with tabs[2]:
+            render_compact_json(result.get("intent_plan") or result.get("intent") or {})
+        with tabs[3]:
+            render_raw_result(result, settings)
+    else:
+        tabs = st.tabs(["적용 Scope", "Intent", "Pandas", "Raw"])
+        with tabs[0]:
+            render_compact_json(result.get("applied_scope") or {})
+        with tabs[1]:
+            render_compact_json(result.get("intent_plan") or result.get("intent") or {})
+        with tabs[2]:
+            analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
+            code = analysis.get("analysis_code") or (analysis.get("pandas_code_json") or {}).get("code", "")
+            if code:
+                st.code(str(code), language="python")
+            render_compact_json({key: value for key, value in analysis.items() if key not in {"rows", "analysis_code", "pandas_code_json"}})
+        with tabs[3]:
+            render_raw_result(result, settings)
+
+
+def metadata_qa_label(metadata_qa: dict[str, Any]) -> str:
+    action = str(metadata_qa.get("metadata_action") or "direct_answer")
+    target = metadata_qa.get("target_dataset") or metadata_qa.get("target_family") or metadata_qa.get("target_term")
+    if target:
+        return f"{action} · {target}"
+    return action
+
+
+def render_raw_result(result: dict[str, Any], settings: dict[str, Any]) -> None:
+    if settings.get("developer_mode"):
+        render_compact_json(result, max_height=520)
+    else:
+        render_inline_status("개발자 정보", "사이드바에서 개발자 정보 보기를 켜면 Raw payload를 볼 수 있습니다.")
 
 
 def render_authoring_page(settings: dict[str, Any]) -> None:
@@ -213,12 +320,13 @@ def render_authoring_page(settings: dict[str, Any]) -> None:
     action = st.selectbox("저장 방식", list(ACTION_LABELS), format_func=lambda key: ACTION_LABELS[key], index=0)
     text = st.text_area("자연어 설명", value=AUTHORING_EXAMPLES[flow_key], height=180)
     run_col, clear_col = st.columns([1, 4])
-    run_clicked = run_col.button("Mock 실행", type="primary", width="stretch")
+    run_clicked = run_col.button("Langflow 실행" if settings.get("runtime_mode") == "Langflow API" else "Mock 실행", type="primary", width="stretch")
     if clear_col.button("결과 지우기", width="stretch"):
         st.session_state.authoring_results = []
         st.rerun()
     if run_clicked:
-        result = st.session_state.mock_api.run_authoring(flow_key, text, action, st.session_state.session_id)
+        with st.spinner("Langflow authoring API 실행 중..." if settings.get("runtime_mode") == "Langflow API" else "Python mock authoring 실행 중..."):
+            result = run_authoring_backend(flow_key, text, action, settings)
         st.session_state.authoring_results.insert(0, result)
     if not st.session_state.authoring_results:
         render_inline_status("대기", "실행하면 정제 텍스트, 생성 item, 검토, 저장 결과가 표시됩니다.")
@@ -226,6 +334,29 @@ def render_authoring_page(settings: dict[str, Any]) -> None:
     for index, result in enumerate(st.session_state.authoring_results[:5]):
         with st.container(border=False):
             render_authoring_result(result, f"authoring_{index}")
+
+
+def run_authoring_backend(flow_key: str, text: str, action: str, settings: dict[str, Any]) -> dict[str, Any]:
+    try:
+        if settings.get("runtime_mode") == "Langflow API":
+            return st.session_state.langflow_api.run_authoring(flow_key, text, action, st.session_state.session_id)
+        return st.session_state.mock_api.run_authoring(flow_key, text, action, st.session_state.session_id)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "ui_status": "error",
+            "message": f"실행 중 오류가 발생했습니다: {exc}",
+            "metadata_type": flow_key,
+            "items": [],
+            "existing_matches": [],
+            "conflict_warnings": [],
+            "review": {},
+            "write_result": {"status": "error", "errors": [str(exc)]},
+            "trace": {"raw_text": text, "duplicate_decision": {"action": action}},
+            "errors": [str(exc)],
+            "warnings": [],
+            "api_mode": settings.get("runtime_mode", "unknown"),
+        }
 
 
 def render_authoring_result(result: dict[str, Any], key_prefix: str) -> None:
@@ -278,12 +409,8 @@ def render_validation_page(settings: dict[str, Any]) -> None:
     selected = st.selectbox("검증 질문", labels)
     item = questions[labels.index(selected)]
     st.text_area("질문", value=item["question"], height=90, key="validation_question")
-    if st.button("Mock 검증 실행", type="primary"):
-        validation = st.session_state.mock_api.validate_question(
-            st.session_state.validation_question,
-            expected_datasets=item.get("expected_datasets"),
-            session_id="validation-session",
-        )
+    if st.button("Langflow 검증 실행" if settings.get("runtime_mode") == "Langflow API" else "Mock 검증 실행", type="primary"):
+        validation = run_validation_backend(st.session_state.validation_question, item.get("expected_datasets"), settings)
         st.session_state.validation_result = validation
     validation = st.session_state.get("validation_result")
     if not validation:
@@ -297,6 +424,24 @@ def render_validation_page(settings: dict[str, Any]) -> None:
     cols[1].markdown("#### 실제 dataset")
     cols[1].write(validation["actual_datasets"])
     render_query_result(validation["result"], settings, "validation")
+
+
+def run_validation_backend(question: str, expected_datasets: list[str] | None, settings: dict[str, Any]) -> dict[str, Any]:
+    if settings.get("runtime_mode") != "Langflow API":
+        return st.session_state.mock_api.validate_question(
+            question,
+            expected_datasets=expected_datasets,
+            session_id="validation-session",
+        )
+    result = run_query_backend(question, {"runtime_mode": "Langflow API", **settings})
+    actual = set((result.get("applied_scope") or {}).get("datasets") or [])
+    expected = set(expected_datasets or [])
+    return {
+        "passed": expected.issubset(actual) if expected else bool(result.get("answer_message")),
+        "expected_datasets": sorted(expected),
+        "actual_datasets": sorted(actual),
+        "result": result,
+    }
 
 
 def render_topbar(title: str, session_id: str) -> None:
@@ -423,6 +568,7 @@ def inject_style() -> None:
         .config-env { color: var(--muted); font-size: 0.64rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .config-badge { display: inline-flex; align-items: center; justify-content: center; min-height: 1.35rem; padding: 0 0.48rem; border-radius: 0.35rem; font-size: 0.66rem; font-weight: 750; }
         .config-badge.ok { background: #dff7ef; color: #047857; }
+        .config-badge.warn { background: #fff7ed; color: #b45309; }
         .config-value { color: #475467; font-size: 0.68rem; }
         .chat-topbar {
             position: sticky; top: 0; z-index: 20; min-height: 2.7rem;
@@ -478,4 +624,3 @@ def inject_style() -> None:
 
 if __name__ == "__main__":
     main()
-

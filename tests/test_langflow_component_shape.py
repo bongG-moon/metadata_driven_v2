@@ -68,6 +68,7 @@ def test_main_flow_files_use_clean_sequential_numbering() -> None:
         "09_answer_prompt_builder.py",
         "10_answer_response_builder.py",
         "11_answer_message_adapter.py",
+        "12_api_response_builder.py",
     ]
     actual_files = [path.name for path in sorted((PROJECT_ROOT / "langflow_components" / "main_flow").glob("*.py"))]
     assert actual_files == expected_files

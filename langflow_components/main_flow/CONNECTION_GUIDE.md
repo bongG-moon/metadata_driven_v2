@@ -9,6 +9,8 @@
 - `04` 뒤에 같은 `01 MongoDB Data Loader` 컴포넌트를 두 번째 인스턴스로 배치하고, 이 인스턴스만 `hydrate_mode=auto`로 둡니다. 평소에는 preview로 통과하고, 위 플래그가 있을 때만 full hydrate합니다.
 - `08 MongoDB Data Store`는 `07 Pandas Code Executor` 직후에 연결합니다. 여기서 원본 `runtime_sources`와 pandas 결과 `analysis.rows`를 모두 MongoDB에 저장하고 payload에는 preview rows와 `data_ref`만 남깁니다.
 - `10 Answer Response Builder`는 `analysis.data_ref`를 최종 `data.data_ref`와 `state.current_data.data_ref`로 이어받습니다.
+- `11 Answer Message Adapter`는 Playground/Chat Output용 Markdown이고, `12 Main Flow API Response Builder`는 web/API용 JSON입니다.
+- 등록 데이터 목록, 특정 dataset 쿼리문/활용 예시, 도메인 정의, 인사/도움말 질문은 `../metadata_qa_flow`의 앞단 노드에서 직접 답변 payload로 만든 뒤 기존 main spine을 pass-through합니다.
 
 ## Node Inventory
 
@@ -17,6 +19,8 @@
 | 00 | `00 Request State Loader` | `00_request_state_loader.py` | `question`, `session_id`, optional `state` | `payload` |
 | 01 | `01 MongoDB Data Loader` | `01_mongodb_data_loader.py` | `payload` | `payload_out` |
 | 02 | `02 Metadata Context Loader` | `02_metadata_context_loader.py` | `payload` | `payload_out` |
+| QA-00 | `00 Metadata Question Router` | `../metadata_qa_flow/00_metadata_question_router.py` | `payload` | `payload_out` |
+| QA-01 | `01 Metadata QA Response Builder` | `../metadata_qa_flow/01_metadata_qa_response_builder.py` | `payload` | `payload_out`, `message` |
 | 03 | `03 Intent Prompt Builder` | `03_intent_prompt_builder.py` | `payload` | `intent_prompt`, `prompt_payload` |
 | LLM-A | Intent LLM | Langflow LLM node | prompt/message | text/message |
 | 04 | `04 Intent Plan Normalizer` | `04_intent_plan_normalizer.py` | `payload`, `llm_response` | `payload_out` |
@@ -31,6 +35,7 @@
 | LLM-C | Answer LLM | Langflow LLM node | prompt/message | text/message |
 | 10 | `10 Answer Response Builder` | `10_answer_response_builder.py` | `payload`, `llm_response` | `payload_out` |
 | 11 | `11 Answer Message Adapter` | `11_answer_message_adapter.py` | `payload` | `message` |
+| 12 | `12 Main Flow API Response Builder` | `12_api_response_builder.py` | `payload` | `api_response`, `api_message` |
 
 ## Required Main Spine
 
@@ -41,9 +46,11 @@
 | 3 | Previous state source | Data | `00 Request State Loader` | `state` | 후속 질문이면 연결 |
 | 4 | `00 Request State Loader` | `payload` | `01 MongoDB Data Loader` | `payload` | 이전 `data_ref` preview/summary 복원 |
 | 5 | `01 MongoDB Data Loader` | `payload_out` | `02 Metadata Context Loader` | `payload` | metadata 추가 |
-| 6 | `02 Metadata Context Loader` | `payload_out` | `03 Intent Prompt Builder` | `payload` | intent prompt 생성 |
+| 6A | `02 Metadata Context Loader` | `payload_out` | `00 Metadata Question Router` | `payload` | 메타데이터/도움말 질문 선분류 |
+| 6B | `00 Metadata Question Router` | `payload_out` | `01 Metadata QA Response Builder` | `payload` | 직접 답변 가능하면 `direct_response_ready=true` payload 생성 |
+| 6C | `01 Metadata QA Response Builder` | `payload_out` | `03 Intent Prompt Builder` | `payload` | 데이터 분석 질문이면 원 payload 그대로 통과 |
 | 7 | `03 Intent Prompt Builder` | `intent_prompt` | Intent LLM | prompt/message input | JSON intent 생성 |
-| 8 | `02 Metadata Context Loader` | `payload_out` | `04 Intent Plan Normalizer` | `payload` | 원 payload |
+| 8 | `01 Metadata QA Response Builder` | `payload_out` | `04 Intent Plan Normalizer` | `payload` | 원 payload 또는 직접 답변 payload |
 | 9 | Intent LLM | text/message output | `04 Intent Plan Normalizer` | `llm_response` | intent JSON 응답 |
 | 10 | `04 Intent Plan Normalizer` | `payload_out` | `01 MongoDB Data Loader` second instance | `payload` | `hydrate_mode=auto` |
 | 11 | second `01 MongoDB Data Loader` | `payload_out` | Retrieval flow start node(s) | `payload` | full hydrate 반영 payload |
@@ -61,6 +68,8 @@
 | 23 | `10 Answer Response Builder` | `payload_out` | `11 Answer Message Adapter` | `payload` | Playground Markdown 생성 |
 | 24 | `11 Answer Message Adapter` | `message` | `Chat Output` | `message` | 사용자 표시 |
 | 25 | `10 Answer Response Builder` | `payload_out.state` | State Store/Web backend | stored state | 다음 turn의 `00.state`로 재사용 |
+| 26 | `10 Answer Response Builder` | `payload_out` | `12 Main Flow API Response Builder` | `payload` | web/API compact JSON 생성 |
+| 27 | `12 Main Flow API Response Builder` | `api_response` or `api_message` | Data Output/API endpoint | response body | Streamlit/backend 표준 응답 |
 
 ## MongoDB Config Inputs
 
@@ -94,6 +103,8 @@ Chat Input
 -> 00 Request State Loader
 -> 01 MongoDB Data Loader (preview)
 -> 02 Metadata Context Loader
+-> 00 Metadata Question Router (metadata_qa_flow)
+-> 01 Metadata QA Response Builder (metadata_qa_flow)
 -> 03 Intent Prompt Builder
 -> Intent LLM
 -> 04 Intent Plan Normalizer
@@ -109,18 +120,37 @@ Chat Input
 -> 10 Answer Response Builder
 -> 11 Answer Message Adapter
 -> Chat Output
+
+parallel:
+10 Answer Response Builder -> 12 Main Flow API Response Builder -> API/Data Output
 ```
 
 병렬 payload branch는 다음을 지켜야 합니다.
 
 ```text
-02 Metadata Context Loader.payload_out -> 04 Intent Plan Normalizer.payload
+01 Metadata QA Response Builder.payload_out -> 04 Intent Plan Normalizer.payload
 04 Intent Plan Normalizer.payload_out -> second 01 MongoDB Data Loader.payload
 second 01 MongoDB Data Loader.payload_out -> 05 Retrieval Payload Adapter.main_payload
 05 Retrieval Payload Adapter.payload -> 07 Pandas Code Executor.payload
 08 MongoDB Data Store.payload_out -> 10 Answer Response Builder.payload
 10 Answer Response Builder.payload_out.state -> next turn state store
+10 Answer Response Builder.payload_out -> 12 Main Flow API Response Builder.payload
 ```
+
+## Metadata QA Front Branch
+
+`metadata_qa_flow`는 main flow 앞단에 끼워 쓰는 보조 flow입니다. `02 Metadata Context Loader`가 MongoDB에서 불러온 `domain_items`, `table_catalog`, `main_flow_filters`를 기준으로 아래 유형을 LLM/pandas 조회 전에 처리합니다.
+
+- 인사/도움말: 예시 질문 몇 개와 사용 안내를 바로 반환
+- 조회 가능한 데이터 목록: dataset_key, 표시명, source_type, family, 필수 파라미터만 반환
+- 특정 dataset 활용 예시: 사용자가 지정한 dataset에 대한 예시 질문만 반환
+- 특정 dataset 조회 쿼리문: `source_config.query_template` 반환
+- 특정 dataset 정보: 수량 컬럼, filter_mappings, default_detail_columns, columns 등 등록 상세 반환
+- 도메인 관련 등록 정보: process/product/quantity/metric/status/analysis_recipes에서 term 매칭 결과 반환
+
+직접 답변이 만들어지면 payload에 `direct_response_ready=true`가 설정됩니다. 이 경우 `03`, `04`, `05`, `06`, `07`, `08`, `09`, `10`은 payload를 그대로 통과시키며, `08 MongoDB Data Store`는 metadata QA 결과를 result collection에 저장하지 않습니다. 그래서 catalog/help 질문이 일반 데이터 조회나 pandas 실행으로 잘못 이어지지 않습니다.
+
+데이터 분석 질문이면 `metadata_route.route=data_analysis`로 표시만 하고 원 payload를 그대로 넘기므로 기존 분석 경로가 유지됩니다.
 
 ## Stored Data Contract
 
@@ -148,3 +178,4 @@ second 01 MongoDB Data Loader.payload_out -> 05 Retrieval Payload Adapter.main_p
 - 같은 turn에서 `05 Retrieval Payload Adapter -> 08 MongoDB Data Store -> 01 MongoDB Data Loader -> 06 Pandas Prompt Builder`로 source rows를 저장했다가 재로드하지 않습니다. 같은 turn 분석은 `runtime_sources`를 직접 사용합니다.
 - `09 Answer Prompt Builder.prompt_payload`를 normalizer/executor의 `payload`로 연결하지 않습니다. 이 output은 prompt 디버깅용 Data입니다.
 - `11 Answer Message Adapter.message`를 후속 state로 저장하지 않습니다. 후속 state는 `10 Answer Response Builder.payload_out.state`를 사용합니다.
+- `11 Answer Message Adapter.message`를 web/API JSON으로 파싱하지 않습니다. 웹은 `12 Main Flow API Response Builder.api_response`를 우선 사용하고, 텍스트 포트만 받을 수 있으면 `api_message`의 JSON 문자열을 사용합니다.

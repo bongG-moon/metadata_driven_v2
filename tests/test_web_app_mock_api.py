@@ -25,6 +25,17 @@ def test_mock_query_supports_followup_state() -> None:
     assert "equipment_status" in second["applied_scope"]["datasets"]
 
 
+def test_mock_query_supports_metadata_qa_without_langflow_api() -> None:
+    client = MockApiClient()
+    result = client.run_query("현재 조회 가능한 DATA LIST 알려줘", session_id="metadata-qa")
+
+    assert result["response_type"] == "metadata_qa"
+    assert result["direct_response_ready"] is True
+    assert result["metadata_qa"]["metadata_action"] == "catalog_list"
+    assert "production_today" in {row["DATASET_KEY"] for row in result["data"]["rows"]}
+    assert result["state"]["context"]["last_route"] == "metadata_qa"
+
+
 def test_mock_authoring_blocks_duplicate_ask_and_saves_merge() -> None:
     client = MockApiClient()
     raw_text = "Lot 수량은 LOT_ID count_distinct로 계산해."
@@ -53,4 +64,3 @@ def test_metadata_lookup_reads_current_seed_files() -> None:
     assert any(item["key"] == "DA" for item in client.list_metadata("domain"))
     assert any(item["dataset_key"] == "wip_today" for item in client.list_metadata("table_catalog"))
     assert any(item["filter_key"] == "DATE" for item in client.list_metadata("main_flow_filter"))
-
