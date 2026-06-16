@@ -1,16 +1,21 @@
 # Main Flow Connection Guide
 
-이 문서는 현재 `langflow_components/main_flow` 파일 기준 Langflow canvas 연결 가이드입니다.
+This guide is based on the files in `langflow_components/main_flow`.
 
-핵심 흐름은 다음과 같습니다.
+> Compatibility note: `main_flow` is the combined single-canvas flow kept for existing deployments. New runtime wiring should prefer `router_flow -> metadata_qa_flow | data_analysis_flow | report_generation_flow | operations_diagnosis_flow`.
 
-- 앞단 `01 MongoDB Data Loader`는 이전 turn의 `state.current_data.data_ref`를 기본 `preview` 모드로 가볍게 복원합니다.
-- 후속 질문이 이전 결과 rows 전체를 다시 분석해야 하면 `04 Intent Plan Normalizer`가 `intent_plan.requires_full_state_hydrate=true`와 `state_hydrate_mode=full`을 설정합니다.
-- `04` 뒤에 같은 `01 MongoDB Data Loader` 컴포넌트를 두 번째 인스턴스로 배치하고, 이 인스턴스만 `hydrate_mode=auto`로 둡니다. 평소에는 preview로 통과하고, 위 플래그가 있을 때만 full hydrate합니다.
-- `08 MongoDB Data Store`는 `07 Pandas Code Executor` 직후에 연결합니다. 여기서 원본 `runtime_sources`와 pandas 결과 `analysis.rows`를 모두 MongoDB에 저장하고 payload에는 preview rows와 `data_ref`만 남깁니다.
-- `10 Answer Response Builder`는 `analysis.data_ref`를 최종 `data.data_ref`와 `state.current_data.data_ref`로 이어받습니다.
-- `11 Answer Message Adapter`는 Playground/Chat Output용 Markdown이고, `12 Main Flow API Response Builder`는 web/API용 JSON입니다.
-- 등록 데이터 목록, 특정 dataset 쿼리문/활용 예시, 도메인 정의, 인사/도움말 질문은 `../metadata_qa_flow`의 앞단 노드에서 직접 답변 payload로 만든 뒤 기존 main spine을 pass-through합니다.
+## Design Decisions
+
+- Metadata/help/catalog questions are handled inside `main_flow` by `03 Route Candidate Builder`, `04` route prompt + route LLM, `05 Route Classifier Normalizer`, and `06 Metadata QA Response Builder`.
+- The metadata QA branch still runs before the intent LLM. This is intentional: metadata questions do not need data retrieval, pandas execution, or result storage, and routing them before the heavy analysis path prevents catalog/help questions from drifting into normal data analysis.
+- `03` does not classify metadata question types by keyword. It builds metadata-backed candidates such as candidate dataset/family/quantity term, then the small route LLM classifies the question type.
+- `03` can resolve natural business terms through `domain_items.quantity_terms` as candidate context. For example, "생산량 데이터를 조회하는 쿼리" can provide `production_today` as a candidate without the user saying `production_today`.
+- If a static Langflow canvas cannot conditionally skip LLM-R, it is safe to keep LLM-R wired for every turn because `05` ignores `llm_response` whenever `route_llm_required=false`. A web/API orchestrator can skip the LLM-R call only for those direct cases, such as a short greeting.
+- `target_dataset` in `metadata_route` is only a metadata-QA target pointer for dataset detail/query/example answers. It is not the analysis dataset list; normal analysis datasets are still chosen later by `07`/`08`.
+- `07 Intent Prompt Builder` still supports `direct_response_ready=true`. When metadata QA has already prepared a direct answer, node `07` emits a small skip prompt and downstream nodes pass the payload through.
+- The first `01 MongoDB Data Loader` is optional. If the caller passes compact previous `state.current_data` with `data_ref`, `row_count`, `columns`, preview `rows`, and product key summary, `00 Request State Loader` is enough.
+- Keep the second `01 MongoDB Data Loader` after `08 Intent Plan Normalizer` with `hydrate_mode=auto`. It loads full previous rows only when the normalized intent sets `requires_full_state_hydrate=true` or `state_hydrate_mode=full`.
+- `18 MongoDB Data Store` belongs immediately after `17 Pandas Code Executor`. It stores both original retrieval rows and pandas result rows, then leaves compact previews and `data_ref` pointers in the payload.
 
 ## Node Inventory
 
@@ -19,163 +24,170 @@
 | 00 | `00 Request State Loader` | `00_request_state_loader.py` | `question`, `session_id`, optional `state` | `payload` |
 | 01 | `01 MongoDB Data Loader` | `01_mongodb_data_loader.py` | `payload` | `payload_out` |
 | 02 | `02 Metadata Context Loader` | `02_metadata_context_loader.py` | `payload` | `payload_out` |
-| QA-00 | `00 Metadata Question Router` | `../metadata_qa_flow/00_metadata_question_router.py` | `payload` | `payload_out` |
-| QA-01 | `01 Metadata QA Response Builder` | `../metadata_qa_flow/01_metadata_qa_response_builder.py` | `payload` | `payload_out`, `message` |
-| 03 | `03 Intent Prompt Builder` | `03_intent_prompt_builder.py` | `payload` | `intent_prompt`, `prompt_payload` |
+| 03 | `03 Route Candidate Builder` | `03_route_candidate_builder.py` | `payload` | `payload_out` |
+| 04 | `04 Route Classifier Prompt Builder` | `04_route_classifier_prompt_builder.py` | `payload` | `route_prompt`, `prompt_payload` |
+| LLM-R | Route Classifier LLM | Langflow LLM node | prompt/message | text/message |
+| 05 | `05 Route Classifier Normalizer` | `05_route_classifier_normalizer.py` | `payload`, optional `llm_response` | `payload_out` |
+| 06 | `06 Metadata QA Response Builder` | `06_metadata_qa_response_builder.py` | `payload` | `payload_out`, `message` |
+| 07 | `07 Intent Prompt Builder` | `07_intent_prompt_builder.py` | `payload` | `intent_prompt`, `prompt_payload` |
 | LLM-A | Intent LLM | Langflow LLM node | prompt/message | text/message |
-| 04 | `04 Intent Plan Normalizer` | `04_intent_plan_normalizer.py` | `payload`, `llm_response` | `payload_out` |
-| 04B | `01 MongoDB Data Loader` second instance | `01_mongodb_data_loader.py` | `payload` | `payload_out` |
-| Retrieval | Data Retrieval Flow | `../data_retrieval_flow` | `payload` | `retrieval_payload` |
-| 05 | `05 Retrieval Payload Adapter` | `05_retrieval_payload_adapter.py` | `main_payload`, `retrieval_payload` | `payload` |
-| 06 | `06 Pandas Prompt Builder` | `06_pandas_prompt_builder.py` | `payload` | `pandas_prompt`, `prompt_payload` |
+| 08 | `08 Intent Plan Normalizer` | `08_intent_plan_normalizer.py` | `payload`, `llm_response` | `payload_out` |
+| 09 | `09 Dummy Data Retriever` | `09_dummy_data_retriever.py` | `payload` | `retrieval_payload` |
+| 10 | `10 Oracle Query Retriever` | `10_oracle_query_retriever.py` | `payload`, optional Oracle config | `retrieval_payload` |
+| 11 | `11 H-API Retriever` | `11_h_api_retriever.py` | `payload`, optional token | `retrieval_payload` |
+| 12 | `12 Datalake Retriever` | `12_datalake_retriever.py` | `payload`, optional lakehouse credentials | `retrieval_payload` |
+| 13 | `13 Goodocs Retriever` | `13_goodocs_retriever.py` | `payload`, optional Goodocs credentials | `retrieval_payload` |
+| 14 | `14 Source Retrieval Merger` | `14_source_retrieval_merger.py` | source retrieval payloads | `retrieval_payload` |
+| 15 | `15 Retrieval Payload Adapter` | `15_retrieval_payload_adapter.py` | `main_payload`, `retrieval_payload` | `payload` |
+| 16 | `16 Pandas Prompt Builder` | `16_pandas_prompt_builder.py` | `payload` | `pandas_prompt`, `prompt_payload` |
 | LLM-B | Pandas Code LLM | Langflow LLM node | prompt/message | text/message |
-| 07 | `07 Pandas Code Executor` | `07_pandas_code_executor.py` | `payload`, `llm_response` | `payload_out` |
-| 08 | `08 MongoDB Data Store` | `08_mongodb_data_store.py` | `payload` | `payload_out` |
-| 09 | `09 Answer Prompt Builder` | `09_answer_prompt_builder.py` | `payload` | `answer_prompt`, `prompt_payload` |
+| 17 | `17 Pandas Code Executor` | `17_pandas_code_executor.py` | `payload`, `llm_response` | `payload_out` |
+| 18 | `18 MongoDB Data Store` | `18_mongodb_data_store.py` | `payload` | `payload_out` |
+| 19 | `19 Answer Prompt Builder` | `19_answer_prompt_builder.py` | `payload` | `answer_prompt`, `prompt_payload` |
 | LLM-C | Answer LLM | Langflow LLM node | prompt/message | text/message |
-| 10 | `10 Answer Response Builder` | `10_answer_response_builder.py` | `payload`, `llm_response` | `payload_out` |
-| 11 | `11 Answer Message Adapter` | `11_answer_message_adapter.py` | `payload` | `message` |
-| 12 | `12 Main Flow API Response Builder` | `12_api_response_builder.py` | `payload` | `api_response`, `api_message` |
+| 20 | `20 Answer Response Builder` | `20_answer_response_builder.py` | `payload`, `llm_response` | `payload_out` |
+| 21 | `21 Answer Message Adapter` | `21_answer_message_adapter.py` | `payload` | `message` |
+| 22 | `22 Main Flow API Response Builder` | `22_api_response_builder.py` | `payload` | `api_response`, `api_message` |
 
-## Required Main Spine
+## Recommended Canvas Sequence
+
+```text
+Chat Input
+-> 00 Request State Loader
+-> 02 Metadata Context Loader
+-> 03 Route Candidate Builder
+-> 04 Route Classifier Prompt Builder
+-> Route Classifier LLM (only when `route_llm_required=true`)
+-> 05 Route Classifier Normalizer
+-> 06 Metadata QA Response Builder
+-> 07 Intent Prompt Builder
+-> Intent LLM
+-> 08 Intent Plan Normalizer
+-> 01 MongoDB Data Loader (second instance, hydrate_mode=auto)
+-> 09/10/11/12/13 source retriever nodes
+-> 14 Source Retrieval Merger
+-> 15 Retrieval Payload Adapter
+-> 16 Pandas Prompt Builder
+-> Pandas Code LLM
+-> 17 Pandas Code Executor
+-> 18 MongoDB Data Store
+-> 19 Answer Prompt Builder
+-> Answer LLM
+-> 20 Answer Response Builder
+-> 21 Answer Message Adapter
+-> Chat Output
+
+parallel:
+20 Answer Response Builder -> 22 Main Flow API Response Builder -> API/Data Output
+```
+
+If the client cannot pass compact previous state and only has a MongoDB `data_ref`, insert an optional first loader:
+
+```text
+00 Request State Loader
+-> 01 MongoDB Data Loader (optional first instance, hydrate_mode=preview)
+-> 02 Metadata Context Loader
+```
+
+## Required Branch Connections
 
 | # | From node | From output | To node | To input | Note |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `Chat Input` | `message` or `text` | `00 Request State Loader` | `question` | 사용자 질문 |
-| 2 | Text/Input field | value | `00 Request State Loader` | `session_id` | 사용자/session key |
-| 3 | Previous state source | Data | `00 Request State Loader` | `state` | 후속 질문이면 연결 |
-| 4 | `00 Request State Loader` | `payload` | `01 MongoDB Data Loader` | `payload` | 이전 `data_ref` preview/summary 복원 |
-| 5 | `01 MongoDB Data Loader` | `payload_out` | `02 Metadata Context Loader` | `payload` | metadata 추가 |
-| 6A | `02 Metadata Context Loader` | `payload_out` | `00 Metadata Question Router` | `payload` | 메타데이터/도움말 질문 선분류 |
-| 6B | `00 Metadata Question Router` | `payload_out` | `01 Metadata QA Response Builder` | `payload` | 직접 답변 가능하면 `direct_response_ready=true` payload 생성 |
-| 6C | `01 Metadata QA Response Builder` | `payload_out` | `03 Intent Prompt Builder` | `payload` | 데이터 분석 질문이면 원 payload 그대로 통과 |
-| 7 | `03 Intent Prompt Builder` | `intent_prompt` | Intent LLM | prompt/message input | JSON intent 생성 |
-| 8 | `01 Metadata QA Response Builder` | `payload_out` | `04 Intent Plan Normalizer` | `payload` | 원 payload 또는 직접 답변 payload |
-| 9 | Intent LLM | text/message output | `04 Intent Plan Normalizer` | `llm_response` | intent JSON 응답 |
-| 10 | `04 Intent Plan Normalizer` | `payload_out` | `01 MongoDB Data Loader` second instance | `payload` | `hydrate_mode=auto` |
-| 11 | second `01 MongoDB Data Loader` | `payload_out` | Retrieval flow start node(s) | `payload` | full hydrate 반영 payload |
-| 12 | second `01 MongoDB Data Loader` | `payload_out` | `05 Retrieval Payload Adapter` | `main_payload` | main payload branch |
-| 13 | Retrieval flow end node | `retrieval_payload` | `05 Retrieval Payload Adapter` | `retrieval_payload` | source rows 병합 |
-| 14 | `05 Retrieval Payload Adapter` | `payload` | `06 Pandas Prompt Builder` | `payload` | source rows 포함 payload |
-| 15 | `06 Pandas Prompt Builder` | `pandas_prompt` | Pandas Code LLM | prompt/message input | JSON-only pandas code |
-| 16 | `05 Retrieval Payload Adapter` | `payload` | `07 Pandas Code Executor` | `payload` | LLM code와 합칠 payload |
-| 17 | Pandas Code LLM | text/message output | `07 Pandas Code Executor` | `llm_response` | pandas code JSON |
-| 18 | `07 Pandas Code Executor` | `payload_out` | `08 MongoDB Data Store` | `payload` | source/result rows 저장 및 compact |
-| 19 | `08 MongoDB Data Store` | `payload_out` | `09 Answer Prompt Builder` | `payload` | compacted result preview로 답변 prompt 생성 |
-| 20 | `09 Answer Prompt Builder` | `answer_prompt` | Answer LLM | prompt/message input | 한국어 답변 생성 |
-| 21 | `08 MongoDB Data Store` | `payload_out` | `10 Answer Response Builder` | `payload` | 저장된 `analysis.data_ref` 포함 payload |
-| 22 | Answer LLM | text/message output | `10 Answer Response Builder` | `llm_response` | 최종 답변 |
-| 23 | `10 Answer Response Builder` | `payload_out` | `11 Answer Message Adapter` | `payload` | Playground Markdown 생성 |
-| 24 | `11 Answer Message Adapter` | `message` | `Chat Output` | `message` | 사용자 표시 |
-| 25 | `10 Answer Response Builder` | `payload_out.state` | State Store/Web backend | stored state | 다음 turn의 `00.state`로 재사용 |
-| 26 | `10 Answer Response Builder` | `payload_out` | `12 Main Flow API Response Builder` | `payload` | web/API compact JSON 생성 |
-| 27 | `12 Main Flow API Response Builder` | `api_response` or `api_message` | Data Output/API endpoint | response body | Streamlit/backend 표준 응답 |
+| 1 | `Chat Input` | message/text | `00 Request State Loader` | `question` | User question |
+| 2 | State store/web backend | Data | `00 Request State Loader` | `state` | Compact previous state |
+| 3 | `00 Request State Loader` | `payload` | `02 Metadata Context Loader` | `payload` | Preferred path when state already has preview/summary |
+| 3B | `00 Request State Loader` | `payload` | optional first `01 MongoDB Data Loader` | `payload` | Only when previous state needs preview hydration from MongoDB |
+| 3C | optional first `01 MongoDB Data Loader` | `payload_out` | `02 Metadata Context Loader` | `payload` | Optional preview-hydrated state |
+| 4 | `02 Metadata Context Loader` | `payload_out` | `03 Route Candidate Builder` | `payload` | Metadata-backed route candidates |
+| 5 | `03 Route Candidate Builder` | `payload_out` | `04 Route Classifier Prompt Builder` | `payload` | Build question-type route prompt |
+| 6 | `04 Route Classifier Prompt Builder` | `route_prompt` | Route Classifier LLM | prompt/message | Small JSON route decision; can be skipped only when `route_llm_required=false` |
+| 7 | `03 Route Candidate Builder` | `payload_out` | `05 Route Classifier Normalizer` | `payload` | Main route payload branch |
+| 8 | Route Classifier LLM | text/message | `05 Route Classifier Normalizer` | `llm_response` | Route JSON; blank is ok only when `route_llm_required=false` |
+| 9 | `05 Route Classifier Normalizer` | `payload_out` | `06 Metadata QA Response Builder` | `payload` | Direct answer or pass-through |
+| 10 | `06 Metadata QA Response Builder` | `payload_out` | `07 Intent Prompt Builder` | `payload` | Direct answers produce skip prompt |
+| 11 | `07 Intent Prompt Builder` | `intent_prompt` | Intent LLM | prompt/message | JSON intent |
+| 12 | `06 Metadata QA Response Builder` | `payload_out` | `08 Intent Plan Normalizer` | `payload` | Main payload branch |
+| 13 | Intent LLM | text/message | `08 Intent Plan Normalizer` | `llm_response` | Intent JSON response |
+| 14 | `08 Intent Plan Normalizer` | `payload_out` | second `01 MongoDB Data Loader` | `payload` | Set this loader to `hydrate_mode=auto` |
+| 15 | second `01 MongoDB Data Loader` | `payload_out` | source retriever nodes `09`~`13` | `payload` | Source-specific retrieval |
+| 16 | `10/11/12/13` | `retrieval_payload` | `14 Source Retrieval Merger` | matching source input | Merge real source payloads |
+| 17 | `14 Source Retrieval Merger` | `retrieval_payload` | `15 Retrieval Payload Adapter` | `retrieval_payload` | Unified source rows |
+| 18 | second `01 MongoDB Data Loader` | `payload_out` | `15 Retrieval Payload Adapter` | `main_payload` | Main payload branch |
+| 19 | `15 Retrieval Payload Adapter` | `payload` | `16 Pandas Prompt Builder` | `payload` | Build pandas prompt |
+| 20 | `15 Retrieval Payload Adapter` | `payload` | `17 Pandas Code Executor` | `payload` | Payload branch for executor |
+| 21 | Pandas Code LLM | text/message | `17 Pandas Code Executor` | `llm_response` | JSON pandas code |
+| 22 | `17 Pandas Code Executor` | `payload_out` | `18 MongoDB Data Store` | `payload` | Store source/result rows |
+| 23 | `18 MongoDB Data Store` | `payload_out` | `19 Answer Prompt Builder` | `payload` | Build final answer prompt |
+| 24 | `18 MongoDB Data Store` | `payload_out` | `20 Answer Response Builder` | `payload` | Carry compact `data_ref` |
+| 25 | Answer LLM | text/message | `20 Answer Response Builder` | `llm_response` | Final answer |
+| 26 | `20 Answer Response Builder` | `payload_out` | `21 Answer Message Adapter` | `payload` | Playground markdown |
+| 27 | `20 Answer Response Builder` | `payload_out` | `22 Main Flow API Response Builder` | `payload` | Web/API JSON |
+| 28 | `20 Answer Response Builder` | `payload_out.state` | State store/web backend | stored state | Use as next turn `00.state` |
+
+## Previous State Contract
+
+`00 Request State Loader` is enough when the caller passes this compact state:
+
+```json
+{
+  "chat_history": [],
+  "context": {},
+  "current_data": {
+    "columns": ["MODE", "WIP"],
+    "rows": [{"MODE": "LPDDR5", "WIP": 10}],
+    "row_count": 100,
+    "data_ref": {"store": "mongodb", "ref_id": "..."},
+    "source_dataset_keys": ["wip_today"],
+    "source_aliases": ["wip_data"],
+    "product_key_columns": ["MODE"],
+    "product_key_values": [{"MODE": "LPDDR5"}],
+    "product_key_count": 1
+  },
+  "followup_source_results": []
+}
+```
+
+The optional first `01 MongoDB Data Loader` exists for compatibility with states that have only `data_ref` and no preview rows/summary. It should use `hydrate_mode=preview`.
+
+## Metadata QA Policy
+
+Metadata QA answers are metadata-backed after question-type routing:
+
+- Greeting/help questions return a direct guide and a few example questions.
+- Data list questions return dataset keys, display names, source types, families, required params, and quantity columns.
+- Dataset example questions return examples only for the requested dataset.
+- Dataset query questions return registered `source_config.query_template`.
+- Domain questions search registered domain metadata.
+
+When `direct_response_ready=true`, downstream analysis and answer nodes pass through the payload. `18 MongoDB Data Store` does not store metadata QA rows in the result collection.
+
+## Full Hydrate Policy
+
+Default follow-up planning uses only compact state: `data_ref`, `row_count`, `columns`, preview rows, and product key summary.
+
+Full hydrate is requested only after intent normalization when the question needs the previous result rows themselves, for example:
+
+- Re-show all/detail/original rows from the previous result.
+- Re-sort, filter, rank, regroup, or aggregate the previous result.
+- LLM intent explicitly sets `requires_full_state_hydrate=true` or `state_hydrate_mode=full`.
+
+Questions such as "이 제품의 할당 장비 대수 알려줘" usually need only previous product keys plus a new `equipment_status` retrieval, so summary state is enough.
 
 ## MongoDB Config Inputs
 
 | Target node | Input | Recommended value |
 | --- | --- | --- |
-| first `01 MongoDB Data Loader` | `mongo_uri` | 비워두면 `MONGODB_URI` |
-| first `01 MongoDB Data Loader` | `mongo_database` | 비워두면 `MONGODB_DATABASE` |
-| first `01 MongoDB Data Loader` | `result_collection_name` | `agent_v2_result_store` 또는 `MONGODB_RESULT_COLLECTION` |
-| first `01 MongoDB Data Loader` | `hydrate_mode` | `preview` |
-| first `01 MongoDB Data Loader` | `preview_row_limit` | 기본 `5` |
+| optional first `01 MongoDB Data Loader` | `hydrate_mode` | `preview` |
+| optional first `01 MongoDB Data Loader` | `preview_row_limit` | `5` |
 | second `01 MongoDB Data Loader` | `hydrate_mode` | `auto` |
-| second `01 MongoDB Data Loader` | `preview_row_limit` | 기본 `5` |
-| `02 Metadata Context Loader` | `mongo_uri` | MongoDB metadata 조회 URI |
-| `02 Metadata Context Loader` | `mongo_database` | `metadata_driven_agent_v2` 또는 운영 DB |
+| second `01 MongoDB Data Loader` | `preview_row_limit` | `5` |
 | `02 Metadata Context Loader` | `domain_collection_name` | `agent_v2_domain_items` |
 | `02 Metadata Context Loader` | `table_catalog_collection_name` | `agent_v2_table_catalog_items` |
 | `02 Metadata Context Loader` | `main_flow_filter_collection_name` | `agent_v2_main_flow_filters` |
-| `08 MongoDB Data Store` | `mongo_uri` | 비워두면 `MONGODB_URI` |
-| `08 MongoDB Data Store` | `mongo_database` | 비워두면 `MONGODB_DATABASE` |
-| `08 MongoDB Data Store` | `result_collection_name` | `agent_v2_result_store` 또는 `MONGODB_RESULT_COLLECTION` |
-| `08 MongoDB Data Store` | `enabled` | 기본 `true` |
-| `08 MongoDB Data Store` | `preview_row_limit` | 기본 `5` |
-| `08 MongoDB Data Store` | `min_rows` | 기본 `1` |
+| `18 MongoDB Data Store` | `result_collection_name` | `agent_v2_result_store` or `MONGODB_RESULT_COLLECTION` |
+| `18 MongoDB Data Store` | `preview_row_limit` | `5` |
+| `18 MongoDB Data Store` | `min_rows` | `1` |
 
-Metadata collection과 result store collection은 prefix 조합이 아니라 full collection name을 직접 입력합니다.
+Metadata collections and result-store collections are full collection names, not prefix combinations.
 
-## Minimal Canvas Sequence
 
-```text
-Chat Input
--> 00 Request State Loader
--> 01 MongoDB Data Loader (preview)
--> 02 Metadata Context Loader
--> 00 Metadata Question Router (metadata_qa_flow)
--> 01 Metadata QA Response Builder (metadata_qa_flow)
--> 03 Intent Prompt Builder
--> Intent LLM
--> 04 Intent Plan Normalizer
--> 01 MongoDB Data Loader (second instance, hydrate_mode=auto)
--> Data Retrieval Flow
--> 05 Retrieval Payload Adapter
--> 06 Pandas Prompt Builder
--> Pandas Code LLM
--> 07 Pandas Code Executor
--> 08 MongoDB Data Store
--> 09 Answer Prompt Builder
--> Answer LLM
--> 10 Answer Response Builder
--> 11 Answer Message Adapter
--> Chat Output
-
-parallel:
-10 Answer Response Builder -> 12 Main Flow API Response Builder -> API/Data Output
-```
-
-병렬 payload branch는 다음을 지켜야 합니다.
-
-```text
-01 Metadata QA Response Builder.payload_out -> 04 Intent Plan Normalizer.payload
-04 Intent Plan Normalizer.payload_out -> second 01 MongoDB Data Loader.payload
-second 01 MongoDB Data Loader.payload_out -> 05 Retrieval Payload Adapter.main_payload
-05 Retrieval Payload Adapter.payload -> 07 Pandas Code Executor.payload
-08 MongoDB Data Store.payload_out -> 10 Answer Response Builder.payload
-10 Answer Response Builder.payload_out.state -> next turn state store
-10 Answer Response Builder.payload_out -> 12 Main Flow API Response Builder.payload
-```
-
-## Metadata QA Front Branch
-
-`metadata_qa_flow`는 main flow 앞단에 끼워 쓰는 보조 flow입니다. `02 Metadata Context Loader`가 MongoDB에서 불러온 `domain_items`, `table_catalog`, `main_flow_filters`를 기준으로 아래 유형을 LLM/pandas 조회 전에 처리합니다.
-
-- 인사/도움말: 예시 질문 몇 개와 사용 안내를 바로 반환
-- 조회 가능한 데이터 목록: dataset_key, 표시명, source_type, family, 필수 파라미터만 반환
-- 특정 dataset 활용 예시: 사용자가 지정한 dataset에 대한 예시 질문만 반환
-- 특정 dataset 조회 쿼리문: `source_config.query_template` 반환
-- 특정 dataset 정보: 수량 컬럼, filter_mappings, default_detail_columns, columns 등 등록 상세 반환
-- 도메인 관련 등록 정보: process/product/quantity/metric/status/analysis_recipes에서 term 매칭 결과 반환
-
-직접 답변이 만들어지면 payload에 `direct_response_ready=true`가 설정됩니다. 이 경우 `03`, `04`, `05`, `06`, `07`, `08`, `09`, `10`은 payload를 그대로 통과시키며, `08 MongoDB Data Store`는 metadata QA 결과를 result collection에 저장하지 않습니다. 그래서 catalog/help 질문이 일반 데이터 조회나 pandas 실행으로 잘못 이어지지 않습니다.
-
-데이터 분석 질문이면 `metadata_route.route=data_analysis`로 표시만 하고 원 payload를 그대로 넘기므로 기존 분석 경로가 유지됩니다.
-
-## Stored Data Contract
-
-`08 MongoDB Data Store`는 pandas 직후 payload에서 다음 row list를 저장합니다.
-
-- `runtime_sources.<source_alias>`: 분석에 사용된 원본 retrieval rows
-- `analysis.rows`: pandas executor가 만든 최종 결과 rows
-
-저장 뒤 payload에는 preview rows, `row_count`, `columns`, `data_ref`가 남습니다. `10 Answer Response Builder`는 `analysis.data_ref`를 `data.data_ref`와 `state.current_data.data_ref`로 이어받으므로, 다음 turn state에는 전체 rows가 아니라 compact reference와 summary만 저장됩니다.
-
-## Full Hydrate Policy
-
-기본 후속 질문은 `state.current_data.product_key_values`, `row_count`, `columns`, preview rows만 사용합니다.
-
-다음 유형은 이전 결과 rows 전체가 필요하므로 `04 Intent Plan Normalizer`가 full hydrate를 요청합니다.
-
-- 이전 결과 전체/상세/원본 rows를 다시 보여 달라는 질문
-- 이전 결과를 다시 정렬, 필터, top/bottom, groupby, 합계/평균 등으로 재분석하는 질문
-- LLM intent JSON이 `requires_full_state_hydrate=true` 또는 `state_hydrate_mode=full`을 명시한 경우
-
-반대로 “이 제품/해당 제품의 장비를 보여줘”처럼 이전 결과의 제품 key만 새 retrieval에 쓰는 질문은 summary hydrate로 충분합니다.
-
-## Do Not Connect This Way
-
-- 같은 turn에서 `05 Retrieval Payload Adapter -> 08 MongoDB Data Store -> 01 MongoDB Data Loader -> 06 Pandas Prompt Builder`로 source rows를 저장했다가 재로드하지 않습니다. 같은 turn 분석은 `runtime_sources`를 직접 사용합니다.
-- `09 Answer Prompt Builder.prompt_payload`를 normalizer/executor의 `payload`로 연결하지 않습니다. 이 output은 prompt 디버깅용 Data입니다.
-- `11 Answer Message Adapter.message`를 후속 state로 저장하지 않습니다. 후속 state는 `10 Answer Response Builder.payload_out.state`를 사용합니다.
-- `11 Answer Message Adapter.message`를 web/API JSON으로 파싱하지 않습니다. 웹은 `12 Main Flow API Response Builder.api_response`를 우선 사용하고, 텍스트 포트만 받을 수 있으면 `api_message`의 JSON 문자열을 사용합니다.

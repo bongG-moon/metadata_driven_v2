@@ -1,4 +1,4 @@
-﻿# Langflow Implementation Guide
+# Langflow Implementation Guide
 
 이 문서는 metadata-driven manufacturing agent를 Langflow 기반으로 구현할 때 지켜야 할 구현 방향을 정리한다.
 
@@ -11,7 +11,7 @@
 - 사용자의 실제 업무 용어를 metadata와 연결한다.
 - 질문을 사람이 사고하듯 순서가 있는 실행 단계로 나눈다.
 - 데이터 조회는 별도 retrieval flow가 담당한다.
-- dummy data도 main flow shortcut이 아니라 별도 `01 Dummy Data Retriever`를 통해 조회한다.
+- dummy data도 main flow shortcut이 아니라 `09 Dummy Data Retriever`를 통해 조회한다.
 - 통합 분석과 계산은 pandas code로 수행한다.
 - Gemini/LLM node는 Langflow 기본 LLM node를 사용한다.
 - custom component는 standalone으로 작성하고, sibling helper import에 의존하지 않는다.
@@ -21,23 +21,29 @@
 실제 Langflow canvas에 붙일 권장 component 순서는 아래와 같다.
 
 1. `00_request_state_loader.py`
-2. `01_mongodb_data_loader.py`
+2. optional first `01_mongodb_data_loader.py` only when previous state needs preview restore
 3. `02_metadata_context_loader.py`
-4. `03_intent_prompt_builder.py`
-5. Gemini/LLM intent JSON node
-6. `04_intent_plan_normalizer.py`
-7. data retrieval flow
-8. `05_retrieval_payload_adapter.py`
-9. `06_pandas_prompt_builder.py`
-10. Gemini/LLM pandas code JSON node
-11. `07_pandas_code_executor.py`
-12. `08_mongodb_data_store.py`
-13. `09_answer_prompt_builder.py`
-14. Gemini/LLM final answer node
-15. `10_answer_response_builder.py`
-16. `11_answer_message_adapter.py`
+4. `03_route_candidate_builder.py`
+5. `04_route_classifier_prompt_builder.py`
+6. optional small route-classifier LLM node for ambiguous routes
+7. `05_route_classifier_normalizer.py`
+8. `06_metadata_qa_response_builder.py`
+9. `07_intent_prompt_builder.py`
+10. Gemini/LLM intent JSON node
+11. `08_intent_plan_normalizer.py`
+12. previous-result restore loader branch when full previous rows are required
+13. `09`~`14` main flow source retriever nodes
+14. `15_retrieval_payload_adapter.py`
+15. `16_pandas_prompt_builder.py`
+16. Gemini/LLM pandas code JSON node
+17. `17_pandas_code_executor.py`
+18. `18_mongodb_data_store.py`
+19. `19_answer_prompt_builder.py`
+20. Gemini/LLM final answer node
+21. `20_answer_response_builder.py`
+22. `21_answer_message_adapter.py`
 
-LLM 없이 동작하는 deterministic 예시는 `langflow_components/demo_flow/`에 따로 둔다. 운영 권장 canvas는 `langflow_components/main_flow/`와 `langflow_components/data_retrieval_flow/`의 조합을 따른다.
+LLM 없이 동작하는 deterministic 예시는 `langflow_components/demo_flow/`에 따로 둔다. 운영 권장 canvas는 `langflow_components/main_flow/` 안의 main spine, metadata QA, source retrieval nodes를 함께 사용한다.
 
 ## Retrieval Flow Choices
 
@@ -46,45 +52,45 @@ retrieval은 두 방식 중 하나를 쓴다.
 ### Dummy
 
 ```text
-04 Intent Plan Normalizer.payload_out -> 01 Dummy Data Retriever.payload
-04 Intent Plan Normalizer.payload_out -> 05 Retrieval Payload Adapter.main_payload
-01 Dummy Data Retriever.retrieval_payload -> 05 Retrieval Payload Adapter.retrieval_payload
-05 Retrieval Payload Adapter.payload -> 06 Pandas Prompt Builder.payload
-05 Retrieval Payload Adapter.payload -> 07 Pandas Code Executor.payload
+08 Intent Plan Normalizer.payload_out -> 09 Dummy Data Retriever.payload
+08 Intent Plan Normalizer.payload_out -> 15 Retrieval Payload Adapter.main_payload
+09 Dummy Data Retriever.retrieval_payload -> 15 Retrieval Payload Adapter.retrieval_payload
+15 Retrieval Payload Adapter.payload -> 16 Pandas Prompt Builder.payload
+15 Retrieval Payload Adapter.payload -> 17 Pandas Code Executor.payload
 ```
 
 ### Four Sources
 
 ```text
-04 Intent Plan Normalizer.payload_out -> 02 Oracle Query Retriever.payload
-04 Intent Plan Normalizer.payload_out -> 03 H-API Retriever.payload
-04 Intent Plan Normalizer.payload_out -> 04 Datalake Retriever.payload
-04 Intent Plan Normalizer.payload_out -> 05 Goodocs Retriever.payload
-04 Intent Plan Normalizer.payload_out -> 05 Retrieval Payload Adapter.main_payload
+08 Intent Plan Normalizer.payload_out -> 10 Oracle Query Retriever.payload
+08 Intent Plan Normalizer.payload_out -> 11 H-API Retriever.payload
+08 Intent Plan Normalizer.payload_out -> 12 Datalake Retriever.payload
+08 Intent Plan Normalizer.payload_out -> 13 Goodocs Retriever.payload
+08 Intent Plan Normalizer.payload_out -> 15 Retrieval Payload Adapter.main_payload
 
-02 Oracle Query Retriever.retrieval_payload -> 06 Source Retrieval Merger.oracle_retrieval
-03 H-API Retriever.retrieval_payload -> 06 Source Retrieval Merger.h_api_retrieval
-04 Datalake Retriever.retrieval_payload -> 06 Source Retrieval Merger.datalake_retrieval
-05 Goodocs Retriever.retrieval_payload -> 06 Source Retrieval Merger.goodocs_retrieval
+10 Oracle Query Retriever.retrieval_payload -> 14 Source Retrieval Merger.oracle_retrieval
+11 H-API Retriever.retrieval_payload -> 14 Source Retrieval Merger.h_api_retrieval
+12 Datalake Retriever.retrieval_payload -> 14 Source Retrieval Merger.datalake_retrieval
+13 Goodocs Retriever.retrieval_payload -> 14 Source Retrieval Merger.goodocs_retrieval
 
-06 Source Retrieval Merger.retrieval_payload -> 05 Retrieval Payload Adapter.retrieval_payload
-05 Retrieval Payload Adapter.payload -> 06 Pandas Prompt Builder.payload
-05 Retrieval Payload Adapter.payload -> 07 Pandas Code Executor.payload
+14 Source Retrieval Merger.retrieval_payload -> 15 Retrieval Payload Adapter.retrieval_payload
+15 Retrieval Payload Adapter.payload -> 16 Pandas Prompt Builder.payload
+15 Retrieval Payload Adapter.payload -> 17 Pandas Code Executor.payload
 ```
 
 ## LLM Placement
 
 Langflow의 Gemini/LLM node는 세 위치에 둔다.
 
-- Intent planning: `03 Intent Prompt Builder -> Gemini/LLM -> 04 Intent Plan Normalizer`
-- Pandas code generation: `06 Pandas Prompt Builder -> Gemini/LLM -> 07 Pandas Code Executor`
-- Final answer writing: `09 Answer Prompt Builder -> Gemini/LLM -> 10 Answer Response Builder`
+- Intent planning: `07 Intent Prompt Builder -> Gemini/LLM -> 08 Intent Plan Normalizer`
+- Pandas code generation: `16 Pandas Prompt Builder -> Gemini/LLM -> 17 Pandas Code Executor`
+- Final answer writing: `19 Answer Prompt Builder -> Gemini/LLM -> 20 Answer Response Builder`
 
 LLM 출력은 그대로 신뢰하지 않는다. intent JSON은 normalizer에서 dataset key, source alias, params, filter scope를 metadata와 대조하고, pandas code JSON은 safety check를 통과한 뒤 in-memory DataFrame에만 실행한다.
 
 ## Intent Fallback Policy
 
-`04 Intent Plan Normalizer`의 fallback은 LLM 출력이 일부 비어 있을 때 flow가 완전히 끊기지 않도록 하는 최소 보정 장치다. 특정 공정, 제품, 지표 계산식을 코드에 심어두는 용도가 아니다.
+`08 Intent Plan Normalizer`의 fallback은 LLM 출력이 일부 비어 있을 때 flow가 완전히 끊기지 않도록 하는 최소 보정 장치다. 특정 공정, 제품, 지표 계산식을 코드에 심어두는 용도가 아니다.
 
 - `retrieval_jobs`가 비어 있으면 `analysis_kind`별 기본 dataset을 만들지 않는다. LLM이 JSON에 명시한 `datasets`만 사용해 metadata 기반 job shell을 만든다.
 - `step_plan`이 비어 있으면 `rank_top_n`, `rank_bottom_n`, `detail_rows`처럼 어느 도메인에서도 공통으로 해석 가능한 최소 step만 만든다.
@@ -100,7 +106,7 @@ LLM 출력은 그대로 신뢰하지 않는다. intent JSON은 normalizer에서 
 - `metadata`: domain, table catalog, main flow filters
 - `intent_plan`: normalized intent, analysis kind, step plan
 - `retrieval_jobs`: dataset별 조회 요청
-- `runtime_sources`: `05 Retrieval Payload Adapter`가 만든 source rows. 같은 turn의 pandas 실행에 직접 전달한다.
+- `runtime_sources`: `15 Retrieval Payload Adapter`가 만든 source rows. 같은 turn의 pandas 실행에 직접 전달한다.
 - `runtime_source_refs`: 이전 turn에서 compact 저장된 source rows를 참조할 때만 사용한다.
 - `source_results`: compact retrieval trace
 - `analysis`: pandas 실행 결과
@@ -108,9 +114,9 @@ LLM 출력은 그대로 신뢰하지 않는다. intent JSON은 normalizer에서 
 - `applied_scope`: 적용 dataset, filter, params, metadata refs
 - `answer_message`: 최종 답변
 
-`08 MongoDB Data Store`가 pandas 직후 `runtime_sources`와 `analysis.rows`를 MongoDB result collection의 `data_ref`로 compact한다. 그 다음 `10 Answer Response Builder`가 `runtime_sources`를 제거하고, `analysis.data_ref`를 최종 `data.data_ref`와 `state.current_data.data_ref`로 이어받는다. 운영 입력은 `result_collection_name`에 `agent_v2_result_store` 같은 full collection name을 직접 넣는다.
+`18 MongoDB Data Store`가 pandas 직후 `runtime_sources`와 `analysis.rows`를 MongoDB result collection의 `data_ref`로 compact한다. 그 다음 `20 Answer Response Builder`가 `runtime_sources`를 제거하고, `analysis.data_ref`를 최종 `data.data_ref`와 `state.current_data.data_ref`로 이어받는다. 운영 입력은 `result_collection_name`에 `agent_v2_result_store` 같은 full collection name을 직접 넣는다.
 
-Langflow Playground에서 매번 각 노드의 result를 열어보지 않아도 되도록, `11_answer_message_adapter.py`는 최종 payload를 Chat Output용 Markdown으로 표시한다. 표시 내용은 payload를 새로 중복 저장하지 않고 기존 `answer_message`, `data`, `intent_plan`, `applied_scope`, `analysis`를 읽어서 만든다.
+Langflow Playground에서 매번 각 노드의 result를 열어보지 않아도 되도록, `21_answer_message_adapter.py`는 최종 payload를 Chat Output용 Markdown으로 표시한다. 표시 내용은 payload를 새로 중복 저장하지 않고 기존 `answer_message`, `data`, `intent_plan`, `applied_scope`, `analysis`를 읽어서 만든다.
 
 - 답변 내용
 - 결과 테이블과 row count
@@ -153,4 +159,7 @@ $script | & $py -
 ```
 
 대표 smoke 질문은 `docs/LANGFLOW_NODE_CONNECTION_GUIDE.md`를 따른다.
+
+
+
 

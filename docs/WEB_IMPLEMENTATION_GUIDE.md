@@ -1,13 +1,30 @@
-﻿# Web Implementation Guide
+# Web Implementation Guide
 
-이 문서는 `metadata_driven_v2`의 현재 Langflow 구성 기준으로 main query flow와 metadata authoring flow를 web에서 안전하게 사용하기 위한 구현 가이드다.
+이 문서는 `metadata_driven_v2`의 현재 Langflow 구성 기준으로 backend orchestrator, split query flows, metadata authoring flow를 web에서 안전하게 사용하기 위한 구현 가이드다.
+
+## 0. Current Runtime Direction
+
+신규 운영 구조는 단일 `main_flow`가 아니라 아래처럼 분리한다.
+
+```text
+Web/API
+-> router_flow
+-> backend orchestrator
+-> metadata_qa_flow | data_analysis_flow | report_generation_flow | operations_diagnosis_flow
+```
+
+`main_flow`는 기존 배포 호환용 combined canvas로 유지한다. 신규 web backend는 `LANGFLOW_ROUTER_FLOW_ID`가 설정되어 있으면 router를 먼저 실행하고, router의 `selected_flow`에 따라 하위 flow를 한 번 더 호출한다.
 
 대상 사용자는 Langflow, Python, JSON, MongoDB를 직접 다루지 않는 현업 작업자다. Web은 Langflow canvas 편집기를 노출하는 도구가 아니라, 자연어 질의, metadata 등록, 검토, 검증을 업무 화면으로 감싸는 얇은 운영 레이어여야 한다.
 
 기준이 되는 현재 flow 문서:
 
+- `langflow_components/router_flow/CONNECTION_GUIDE.md`
+- `langflow_components/metadata_qa_flow/CONNECTION_GUIDE.md`
+- `langflow_components/data_analysis_flow/CONNECTION_GUIDE.md`
+- `langflow_components/report_generation_flow/CONNECTION_GUIDE.md`
+- `langflow_components/operations_diagnosis_flow/CONNECTION_GUIDE.md`
 - `langflow_components/main_flow/CONNECTION_GUIDE.md`
-- `langflow_components/data_retrieval_flow/CONNECTION_GUIDE.md`
 - `langflow_components/domain_authoring_flow/CONNECTION_GUIDE.md`
 - `langflow_components/table_catalog_authoring_flow/CONNECTION_GUIDE.md`
 - `langflow_components/main_flow_filters_authoring_flow/CONNECTION_GUIDE.md`
@@ -39,17 +56,19 @@ Web에서 일반 사용자에게 제공하지 않을 기능:
 Browser UI
 -> Web Backend API
 -> Langflow Run API
--> Langflow main/authoring flows
+-> Langflow router/subflows/authoring flows
 -> MongoDB metadata collections and result store
 ```
+
+Query runtime은 `LANGFLOW_ROUTER_FLOW_ID`가 있으면 split mode로 동작한다. Router가 만든 `selected_flow`에 따라 backend가 `metadata_qa_flow`, `data_analysis_flow`, `report_generation_flow`, `operations_diagnosis_flow` 중 하나를 호출한다. `LANGFLOW_ROUTER_FLOW_ID`가 없으면 기존 `LANGFLOW_MAIN_FLOW_ID` 기반 combined main flow를 fallback으로 사용할 수 있다.
 
 현재 `metadata_driven_v2`의 flow는 아래 다섯 묶음으로 본다.
 
 | Flow | 폴더 | Web 관점의 역할 |
 | --- | --- | --- |
 | Main query/analysis | `langflow_components/main_flow/` | 질문, state, metadata를 받아 retrieval, pandas, 답변, next state 생성 |
-| Metadata QA front branch | `langflow_components/metadata_qa_flow/` | 인사/도움말, 데이터 목록, dataset 쿼리/예시, domain 등록 정보 질문을 분석 전에 직접 답변 |
-| Data retrieval | `langflow_components/data_retrieval_flow/` | `source_type`별 조회 결과를 `retrieval_payload`로 병합 |
+| Metadata QA front branch | `langflow_components/main_flow/03_route_candidate_builder.py`, `04_route_classifier_prompt_builder.py`, `05_route_classifier_normalizer.py`, `06_metadata_qa_response_builder.py` | intent 전에 metadata 후보 컨텍스트를 만들고, 작은 LLM classifier가 질문 유형 기준으로 metadata QA인지 실제 데이터 분석인지 판정 |
+| Data retrieval | `langflow_components/main_flow/09~14_*` | `source_type`별 조회 결과를 `retrieval_payload`로 병합 |
 | Domain authoring | `langflow_components/domain_authoring_flow/` | domain 용어/규칙을 자연어에서 MongoDB item으로 저장 |
 | Table catalog authoring | `langflow_components/table_catalog_authoring_flow/` | dataset/source/column/filter mapping을 자연어에서 저장 |
 | Main flow filter authoring | `langflow_components/main_flow_filters_authoring_flow/` | 날짜, 공정, 제품, LOT, 장비 등 filter metadata 저장 |
@@ -77,39 +96,44 @@ Browser가 직접 하지 말아야 하는 일:
 ```text
 Chat Input
 -> 00 Request State Loader
--> 01 MongoDB Data Loader
 -> 02 Metadata Context Loader
--> 00 Metadata Question Router
--> 01 Metadata QA Response Builder
--> 03 Intent Prompt Builder
+-> 03 Route Candidate Builder
+-> 04 Route Classifier Prompt Builder
+-> Route Classifier LLM (question-type route)
+-> 05 Route Classifier Normalizer
+-> 06 Metadata QA Response Builder
+-> 07 Intent Prompt Builder
 -> Gemini/LLM Intent JSON
--> 04 Intent Plan Normalizer
--> data retrieval flow
--> 05 Retrieval Payload Adapter
--> 06 Pandas Prompt Builder
+-> 08 Intent Plan Normalizer
+-> 01 MongoDB Data Loader (필요할 때만 이전 결과 전체 복원, internal mode=auto)
+-> 09~14 main_flow retriever nodes
+-> 15 Retrieval Payload Adapter
+-> 16 Pandas Prompt Builder
 -> Gemini/LLM Pandas Code JSON
--> 07 Pandas Code Executor
--> 08 MongoDB Data Store
--> 09 Answer Prompt Builder
+-> 17 Pandas Code Executor
+-> 18 MongoDB Data Store
+-> 19 Answer Prompt Builder
 -> Gemini/LLM Final Answer
--> 10 Answer Response Builder
--> 11 Answer Message Adapter
+-> 20 Answer Response Builder
+-> 21 Answer Message Adapter
 -> Chat Output
 
 parallel:
-10 Answer Response Builder
--> 12 Main Flow API Response Builder
+20 Answer Response Builder
+-> 22 Main Flow API Response Builder
 -> API/Data Output
 ```
 
 Web에서 중요한 차이:
 
-- `08 MongoDB Data Store`가 pandas 직후 `runtime_sources` 원본 rows와 `analysis.rows` 결과 rows를 `MONGODB_RESULT_COLLECTION`에 저장하고 preview row와 `data_ref`로 축약한다.
-- `metadata_qa_flow`가 `direct_response_ready=true`를 만든 질문은 데이터 retrieval/pandas 저장 대상이 아니며, 기존 main flow 노드는 payload를 pass-through한다.
-- `10 Answer Response Builder`의 `payload_out`이 답변, 표, 적용 scope, next `state`를 만들며, `analysis.data_ref`를 `data.data_ref`와 `state.current_data.data_ref`로 이어받는다.
-- `11 Answer Message Adapter`는 Langflow Playground/Chat Output용 Markdown message만 만든다. Web API의 표준 JSON으로 파싱하지 않는다.
-- Web backend는 `12 Main Flow API Response Builder.api_response`를 표준 main flow response로 사용한다.
-- Langflow Run API가 text/message 포트만 반환하는 운영 방식이면 `12 Main Flow API Response Builder.api_message`의 JSON 문자열을 파싱한다.
+- `18 MongoDB Data Store`가 pandas 직후 `runtime_sources` 원본 rows와 `analysis.rows` 결과 rows를 `MONGODB_RESULT_COLLECTION`에 저장하고 preview row와 `data_ref`로 축약한다.
+- main_flow의 metadata QA nodes가 `direct_response_ready=true`를 만든 질문은 데이터 retrieval/pandas 저장 대상이 아니며, 기존 main flow 노드는 payload를 pass-through한다.
+- `metadata_route.target_dataset`은 dataset 설명/쿼리/활용 예시 같은 metadata QA에서만 쓰는 대상 포인터다. 일반 분석 질문에서 조회할 dataset 목록은 intent plan이 별도로 결정한다.
+- 사용자는 dataset key를 몰라도 된다. `생산량 데이터 조회 쿼리 알려줘` 같은 표현은 `domain_items.quantity_terms`의 alias와 dataset mapping을 통해 대표 dataset으로 해석한다.
+- `20 Answer Response Builder`의 `payload_out`이 답변, 표, 적용 scope, next `state`를 만들며, `analysis.data_ref`를 `data.data_ref`와 `state.current_data.data_ref`로 이어받는다.
+- `21 Answer Message Adapter`는 Langflow Playground/Chat Output용 Markdown message만 만든다. Web API의 표준 JSON으로 파싱하지 않는다.
+- Web backend는 `22 Main Flow API Response Builder.api_response`를 표준 main flow response로 사용한다.
+- Langflow Run API가 text/message 포트만 반환하는 운영 방식이면 `22 Main Flow API Response Builder.api_message`의 JSON 문자열을 파싱한다.
 - `12` node는 새 비즈니스 로직을 만들지 않고 `10.payload_out`의 projection만 수행한다.
 
 Main flow 입력:
@@ -190,7 +214,8 @@ Web에서 노출할 main response shape:
 - `data.rows`는 전체 row가 아니라 preview일 수 있다. `row_count`와 `data_ref`를 함께 봐야 한다.
 - 전체 row 다운로드/상세 보기가 필요하면 backend가 `MONGODB_RESULT_COLLECTION`에서 `data_ref.ref_id`로 조회하는 별도 endpoint를 둔다.
 - 후속 질문을 위해 backend는 반환된 `state`를 session별로 저장한다.
-- 다음 query 실행 시 저장된 `state`를 main flow에 다시 전달한다. 현재 main flow는 앞단 `01 MongoDB Data Loader`를 통해 compacted `state.current_data.data_ref`를 기본 `preview` 모드로 가볍게 복원할 수 있게 연결되어 있어야 한다.
+- 다음 query 실행 시 저장된 compact `state`를 main flow에 다시 전달한다. `state.current_data`에 preview rows, row_count, columns, `data_ref`, product key summary가 있으면 `00 Request State Loader`만으로 충분하다.
+- 이전 state에 `data_ref`만 있고 preview/summary가 없다면 optional first `01 MongoDB Data Loader`를 `preview` 모드로 연결한다.
 
 ## 4. 현재 Metadata Authoring Flow 계약
 
@@ -408,6 +433,11 @@ Web backend와 Langflow 운영 기준으로 아래 설정을 분리한다.
 # Langflow backend wrapper
 LANGFLOW_BASE_URL=http://127.0.0.1:7860
 LANGFLOW_API_KEY=
+LANGFLOW_ROUTER_FLOW_ID=
+LANGFLOW_DATA_ANALYSIS_FLOW_ID=
+LANGFLOW_METADATA_QA_FLOW_ID=
+LANGFLOW_REPORT_GENERATION_FLOW_ID=
+LANGFLOW_OPERATIONS_DIAGNOSIS_FLOW_ID=
 LANGFLOW_MAIN_FLOW_ID=
 LANGFLOW_DOMAIN_AUTHORING_FLOW_ID=
 LANGFLOW_TABLE_CATALOG_AUTHORING_FLOW_ID=
@@ -449,7 +479,7 @@ WEB_PENDING_AUTHORING_COLLECTION=agent_v2_pending_authoring
 
 `web_app.langflow_client`는 `LANGFLOW_BASE_URL + *_FLOW_ID`로 `/api/v1/run/{flow_id}` URL을 만들고, 이미 wrapper URL이 있으면 `LANGFLOW_MAIN_API_URL`, `LANGFLOW_DOMAIN_AUTHORING_API_URL`, `LANGFLOW_TABLE_CATALOG_AUTHORING_API_URL`, `LANGFLOW_MAIN_FILTER_AUTHORING_API_URL`을 우선 사용한다. 기존 단일 main URL 이름인 `LANGFLOW_API_URL`도 main flow fallback으로 읽는다.
 
-`MONGODB_RESULT_COLLECTION`은 metadata가 아니라 query result row 저장소다. `08 MongoDB Data Store`는 pandas 직후 source rows와 result rows를 저장하고, `01 MongoDB Data Loader`는 다음 turn의 compact state를 preview/summary로 복원할 때 사용한다. 이전 결과 전체 rows가 필요한 후속 분석은 04 이후 두 번째 loader 인스턴스의 `hydrate_mode=auto`가 full hydrate로 전환한다.
+`MONGODB_RESULT_COLLECTION`은 metadata가 아니라 query result row 저장소다. `18 MongoDB Data Store`는 pandas 직후 source rows와 result rows를 저장한다. 다음 turn에서는 compact state를 그대로 넘기는 것이 기본이며, optional first `01 MongoDB Data Loader`는 이전 state에 `data_ref`만 있고 preview/summary가 없을 때 사용한다. 이전 결과 전체 rows가 필요한 후속 분석은 data analysis flow의 “이전 결과 복원” 브랜치에서 MongoDB loader를 실행한다.
 
 ## 7. 화면 구성
 
@@ -618,7 +648,7 @@ Backend 처리:
 
 1. `session_id`로 이전 `state` 조회.
 2. Langflow main flow 호출.
-3. `12 Main Flow API Response Builder.api_response`의 compacted payload를 읽는다.
+3. `22 Main Flow API Response Builder.api_response`의 compacted payload를 읽는다.
 4. 응답의 `state`를 session store에 저장.
 5. 화면용 response 반환.
 
@@ -676,9 +706,9 @@ Main flow에 전달할 값:
 - `02 Metadata Context Loader.domain_collection_name`
 - `02 Metadata Context Loader.table_catalog_collection_name`
 - `02 Metadata Context Loader.main_flow_filter_collection_name`
-- `08 MongoDB Data Store.mongo_uri`
-- `08 MongoDB Data Store.mongo_database`
-- `08 MongoDB Data Store.result_collection_name`
+- `18 MongoDB Data Store.mongo_uri`
+- `18 MongoDB Data Store.mongo_database`
+- `18 MongoDB Data Store.result_collection_name`
 - `01 MongoDB Data Loader.mongo_uri`
 - `01 MongoDB Data Loader.mongo_database`
 - `01 MongoDB Data Loader.result_collection_name`
@@ -696,9 +726,9 @@ Authoring flow에 전달할 값:
 
 Parsing 원칙:
 
-- Main flow: `12 Main Flow API Response Builder.api_response`를 우선 사용한다. 이 payload는 `10 Answer Response Builder.payload_out`에서 답변, preview data, `data_ref`, state만 projection한 상태다.
+- Main flow: `22 Main Flow API Response Builder.api_response`를 우선 사용한다. 이 payload는 `20 Answer Response Builder.payload_out`에서 답변, preview data, `data_ref`, state만 projection한 상태다.
 - Authoring flow: `08 ... Response Builder.api_response`만 사용한다.
-- `11 Answer Message Adapter.message`와 authoring `message`는 사람이 보는 Markdown/text다. JSON 계약으로 파싱하지 않는다.
+- `21 Answer Message Adapter.message`와 authoring `message`는 사람이 보는 Markdown/text다. JSON 계약으로 파싱하지 않는다.
 - Langflow wrapper가 response를 여러 겹 감싸더라도 backend parser는 대상 output name을 찾아 꺼낸다.
 
 ## 10. Pending Authoring 저장
@@ -795,9 +825,9 @@ Pending record에 저장하지 않을 값:
 ## 15. Web 검증 체크리스트
 
 - main query flow가 정상 호출되는가
-- `12 Main Flow API Response Builder.api_response`의 compacted payload를 JSON으로 받을 수 있는가
+- `22 Main Flow API Response Builder.api_response`의 compacted payload를 JSON으로 받을 수 있는가
 - text/message 포트만 받을 때 `12.api_message` JSON 문자열 fallback을 파싱하는가
-- `11 Answer Message Adapter.message`를 API JSON으로 오인하지 않는가
+- `21 Answer Message Adapter.message`를 API JSON으로 오인하지 않는가
 - session별 follow-up 질문이 유지되는가
 - `state.current_data.data_ref`가 다음 질문 전에 preview/summary로 복원되고, full rows가 초반 payload에 불필요하게 붙지 않는가
 - `MONGODB_RESULT_COLLECTION`에 큰 row가 저장되고 전체 row 조회가 되는가
@@ -809,4 +839,7 @@ Pending record에 저장하지 않을 값:
 - 저장 후 main flow metadata loader가 새 metadata를 읽는가
 - authoring flow의 `08 ... Response Builder.api_response`를 화면 계약으로 사용하고 있는가
 - Browser에 secret이 노출되지 않는가
+
+
+
 

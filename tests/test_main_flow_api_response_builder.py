@@ -18,7 +18,7 @@ def load_component(path: str):
 
 
 def test_main_flow_api_response_builder_projects_current_payload() -> None:
-    builder = load_component("langflow_components/main_flow/12_api_response_builder.py")
+    builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
     payload = {
         "status": "ok",
         "answer_message": "오늘 전체 재공은 30입니다.",
@@ -67,7 +67,7 @@ def test_main_flow_api_response_builder_projects_current_payload() -> None:
 
 
 def test_main_flow_api_response_builder_normalizes_memory_data_ref() -> None:
-    builder = load_component("langflow_components/main_flow/12_api_response_builder.py")
+    builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
 
     result = builder.build_main_flow_api_response(
         {
@@ -80,8 +80,39 @@ def test_main_flow_api_response_builder_normalizes_memory_data_ref() -> None:
     assert result["data"]["data_ref"] == {"store": "memory", "ref_id": "memory://session/current_data"}
 
 
+def test_main_flow_api_response_builder_collects_state_followup_source_refs() -> None:
+    builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
+    source_ref = {
+        "store": "mongodb",
+        "ref_id": "source-ref",
+        "collection_name": "agent_v2_result_store",
+    }
+
+    result = builder.build_main_flow_api_response(
+        {
+            "answer_message": "ok",
+            "data": {"rows": [], "columns": [], "row_count": 0, "data_ref": {}},
+            "analysis": {},
+            "state": {
+                "followup_source_results": [
+                    {
+                        "source_alias": "wip_data",
+                        "dataset_key": "wip_today",
+                        "data_ref": source_ref,
+                    }
+                ],
+                "runtime_source_refs": {"wip_data": source_ref},
+            },
+        }
+    )["api_response"]
+
+    assert [ref["ref_id"] for ref in result["data_refs"]] == ["source-ref"]
+    assert result["data_refs"][0]["source_alias"] == "wip_data"
+    assert result["data_refs"][0]["dataset_key"] == "wip_today"
+
+
 def test_main_flow_api_response_builder_preserves_metadata_qa_contract() -> None:
-    builder = load_component("langflow_components/main_flow/12_api_response_builder.py")
+    builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
 
     result = builder.build_main_flow_api_response(
         {

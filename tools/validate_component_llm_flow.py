@@ -114,13 +114,13 @@ def install_lfx_stubs() -> None:
 def load_components() -> dict[str, Any]:
     return {
         "request_loader": load_component("langflow_components/main_flow/00_request_state_loader.py"),
-        "intent_prompt_builder": load_component("langflow_components/main_flow/03_intent_prompt_builder.py"),
-        "intent_normalizer": load_component("langflow_components/main_flow/04_intent_plan_normalizer.py"),
-        "dummy_retriever": load_component("langflow_components/data_retrieval_flow/01_dummy_data_retriever.py"),
-        "retrieval_adapter": load_component("langflow_components/main_flow/05_retrieval_payload_adapter.py"),
-        "pandas_prompt_builder": load_component("langflow_components/main_flow/06_pandas_prompt_builder.py"),
-        "pandas_executor": load_component("langflow_components/main_flow/07_pandas_code_executor.py"),
-        "answer_builder": load_component("langflow_components/main_flow/10_answer_response_builder.py"),
+        "intent_prompt_builder": load_component("langflow_components/main_flow/07_intent_prompt_builder.py"),
+        "intent_normalizer": load_component("langflow_components/main_flow/08_intent_plan_normalizer.py"),
+        "dummy_retriever": load_component("langflow_components/main_flow/09_dummy_data_retriever.py"),
+        "retrieval_adapter": load_component("langflow_components/main_flow/15_retrieval_payload_adapter.py"),
+        "pandas_prompt_builder": load_component("langflow_components/main_flow/16_pandas_prompt_builder.py"),
+        "pandas_executor": load_component("langflow_components/main_flow/17_pandas_code_executor.py"),
+        "answer_builder": load_component("langflow_components/main_flow/20_answer_response_builder.py"),
     }
 
 

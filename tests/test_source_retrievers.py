@@ -52,7 +52,7 @@ def test_reference_retriever_uses_source_type_with_dummy_fallback():
 
 
 def test_langflow_dummy_retriever_covers_all_current_datasets():
-    module = _load_component("01_dummy_data_retriever.py")
+    module = _load_component("09_dummy_data_retriever.py")
     dataset_keys = [
         "production_today",
         "production",
@@ -123,18 +123,18 @@ def test_langflow_source_retrievers_and_merger_preserve_source_types():
         "state": {},
     }
 
-    oracle = _load_component("02_oracle_query_retriever.py").retrieve_oracle_data(plan)
-    h_api = _load_component("03_h_api_retriever.py").retrieve_h_api_data(plan)
-    datalake = _load_component("04_datalake_retriever.py").retrieve_datalake_data(plan)
-    goodocs = _load_component("05_goodocs_retriever.py").retrieve_goodocs_data(plan)
-    merged = _load_component("06_source_retrieval_merger.py").merge_source_retrieval_payloads(oracle, h_api, datalake, goodocs)
+    oracle = _load_component("10_oracle_query_retriever.py").retrieve_oracle_data(plan)
+    h_api = _load_component("11_h_api_retriever.py").retrieve_h_api_data(plan)
+    datalake = _load_component("12_datalake_retriever.py").retrieve_datalake_data(plan)
+    goodocs = _load_component("13_goodocs_retriever.py").retrieve_goodocs_data(plan)
+    merged = _load_component("14_source_retrieval_merger.py").merge_source_retrieval_payloads(oracle, h_api, datalake, goodocs)
 
     source_types = [item["source_type"] for item in merged["retrieval_payload"]["source_results"]]
     assert source_types == ["oracle", "h_api", "datalake", "goodocs"]
 
 
 def test_langflow_oracle_retriever_executes_sql_when_configured():
-    module = _load_component("02_oracle_query_retriever.py")
+    module = _load_component("10_oracle_query_retriever.py")
 
     class FakeCursor:
         description = [("WORK_DT",), ("PRODUCTION",)]
@@ -194,7 +194,7 @@ def test_langflow_oracle_retriever_executes_sql_when_configured():
 
 
 def test_langflow_h_api_retriever_posts_bind_params_when_token_is_present(monkeypatch):
-    module = _load_component("03_h_api_retriever.py")
+    module = _load_component("11_h_api_retriever.py")
     captured = {}
 
     class FakeResponse:
@@ -230,7 +230,7 @@ def test_langflow_h_api_retriever_posts_bind_params_when_token_is_present(monkey
 
 
 def test_langflow_datalake_retriever_uses_lakehouse_execution(monkeypatch):
-    module = _load_component("04_datalake_retriever.py")
+    module = _load_component("12_datalake_retriever.py")
     calls = {}
 
     class FakeLakeHouse:
@@ -269,7 +269,7 @@ def test_langflow_datalake_retriever_uses_lakehouse_execution(monkeypatch):
 
 
 def test_langflow_goodocs_retriever_reads_document_and_applies_filters():
-    module = _load_component("05_goodocs_retriever.py")
+    module = _load_component("13_goodocs_retriever.py")
     captured = {}
 
     class FakeGoodocs:
@@ -328,7 +328,7 @@ def test_retrieval_payload_adapter_builds_compact_main_payload():
         }
     }
 
-    adapter = _load_main_component("05_retrieval_payload_adapter.py")
+    adapter = _load_main_component("15_retrieval_payload_adapter.py")
     payload = adapter.adapt_retrieval_payload(main_payload, retrieval_payload)
 
     assert payload["runtime_sources"]["hold_history"][0]["LOT_ID"] == "T1234567GEN1"
@@ -341,7 +341,7 @@ def _source_plan(job: dict) -> dict:
 
 
 def _load_component(filename: str):
-    path = ROOT / "langflow_components" / "data_retrieval_flow" / filename
+    path = ROOT / "langflow_components" / "main_flow" / filename
     spec = importlib.util.spec_from_file_location("test_" + path.stem, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

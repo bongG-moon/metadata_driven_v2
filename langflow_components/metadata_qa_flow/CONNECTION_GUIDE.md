@@ -1,27 +1,43 @@
 # Metadata QA Flow Connection Guide
 
-이 flow는 main flow의 `02 Metadata Context Loader` 뒤에 삽입하는 앞단 보조 flow입니다. 등록 데이터 목록, dataset 활용 예시/쿼리문, domain 등록 정보, 인사/도움말 질문을 데이터 retrieval과 pandas 실행 전에 직접 답변합니다.
+`metadata_qa_flow`는 등록된 데이터 카탈로그, query template, 활용 예시, domain metadata, greeting/help 질문만 답합니다. 실제 제조 데이터 조회, pandas 분석, MongoDB result 저장은 하지 않습니다.
 
-## Nodes
-
-| # | Node | Component file | Input | Output |
-| --- | --- | --- | --- | --- |
-| 00 | `00 Metadata Question Router` | `00_metadata_question_router.py` | `payload` | `payload_out` |
-| 01 | `01 Metadata QA Response Builder` | `01_metadata_qa_response_builder.py` | `payload` | `payload_out`, `message` |
-
-## Main Flow Insert Point
+## Sequence
 
 ```text
-02 Metadata Context Loader.payload_out
--> 00 Metadata Question Router.payload
--> 01 Metadata QA Response Builder.payload
--> 03 Intent Prompt Builder.payload
+Backend orchestrator
+-> 00 Metadata QA Request Loader
+-> 01 Metadata Context Loader
+-> 02 Metadata QA Response Builder
+-> 03 Metadata QA Message Adapter
+-> Chat Output
 
-parallel payload branch:
-01 Metadata QA Response Builder.payload_out
--> 04 Intent Plan Normalizer.payload
+parallel:
+02 Metadata QA Response Builder -> 04 Metadata QA API Response Builder -> API/Data Output
 ```
 
-`01 Metadata QA Response Builder`가 직접 답변을 만들면 payload에 `direct_response_ready=true`가 들어갑니다. 이 경우 main flow의 `03`, `04`, `05`, `06`, `07`, `08`, `09`, `10`은 payload를 pass-through하며 `08 MongoDB Data Store`는 result row 저장을 하지 않습니다.
+## Required Inputs
 
-데이터 분석 질문이면 `metadata_route.route=data_analysis`로만 표시하고 원 payload를 그대로 넘깁니다.
+`00 Metadata QA Request Loader`에는 router 결과를 같이 넘깁니다.
+
+| Input | Value |
+| --- | --- |
+| `question` | 사용자 질문 |
+| `session_id` | 현재 세션 |
+| `state` | 이전 compact state |
+| `metadata_route` | router_flow의 `flow_inputs.metadata_route` |
+| `metadata` | router_flow에서 이미 로드한 metadata가 있으면 전달 가능 |
+| `router_payload` | 전체 route decision payload |
+
+`metadata_route.route`가 `direct_answer` 또는 `metadata_qa`일 때만 이 flow를 호출합니다.
+
+## Supported Actions
+
+| metadata_action | Behavior |
+| --- | --- |
+| `greeting` / `help` | 간단한 안내와 예시 질문 |
+| `catalog_list` | 조회 가능한 dataset 목록 |
+| `dataset_examples` | 특정 dataset 활용 질문 예시 |
+| `dataset_detail` | 컬럼, 필터, source type, 필수 파라미터 등 등록 상세 |
+| `dataset_query` | 등록된 query template/API 조회 정보 |
+| `domain_search` | 등록된 domain/alias/condition 검색 |

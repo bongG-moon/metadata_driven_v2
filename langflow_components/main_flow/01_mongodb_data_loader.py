@@ -147,6 +147,9 @@ def _hydrate_refs(
                             }
                         )
 
+        if path == "" and hydrate_mode == "full":
+            _restore_followup_source_results(result, collection, loaded, cache)
+
         data_ref = result.get("data_ref") if isinstance(result.get("data_ref"), dict) else {}
         if _is_mongo_ref(data_ref):
             if not _should_hydrate_ref(path):
@@ -215,6 +218,76 @@ def _hydrate_refs(
     return deepcopy(value)
 
 
+def _restore_followup_source_results(
+    payload: dict[str, Any],
+    collection: Any,
+    loaded: list[dict[str, Any]],
+    cache: dict[str, dict[str, Any]],
+) -> None:
+    refs_by_alias = _followup_source_refs(payload)
+    if not refs_by_alias:
+        return
+
+    runtime_sources = payload.get("runtime_sources") if isinstance(payload.get("runtime_sources"), dict) else {}
+    runtime_sources = deepcopy(runtime_sources)
+    runtime_source_refs = payload.get("runtime_source_refs") if isinstance(payload.get("runtime_source_refs"), dict) else {}
+    runtime_source_refs = deepcopy(runtime_source_refs)
+    restored_any = False
+
+    for alias, data_ref in refs_by_alias.items():
+        loaded_rows = _load_rows(collection, data_ref, cache, row_limit=None)
+        rows = loaded_rows["rows"]
+        if not rows:
+            continue
+        runtime_sources[alias] = _json_ready(rows)
+        runtime_source_refs[alias] = deepcopy(data_ref)
+        restored_any = True
+        loaded.append(
+            {
+                "path": f"runtime_sources.{alias}",
+                "ref_id": data_ref.get("ref_id"),
+                "row_count": len(rows),
+                "cache_hit": loaded_rows["cache_hit"],
+                "mode": "full",
+                "source": "followup_source_results",
+            }
+        )
+
+    if restored_any:
+        payload["runtime_sources"] = runtime_sources
+        payload["runtime_source_refs"] = runtime_source_refs
+        payload["runtime_sources_are_preview"] = False
+
+
+def _followup_source_refs(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+    refs: dict[str, dict[str, Any]] = {}
+    source_results = state.get("followup_source_results")
+    if isinstance(source_results, list):
+        for index, item in enumerate(source_results):
+            if not isinstance(item, dict):
+                continue
+            data_ref = item.get("data_ref")
+            if not _is_mongo_ref(data_ref):
+                continue
+            alias = _source_alias(item, index)
+            refs.setdefault(alias, deepcopy(data_ref))
+
+    state_refs = state.get("runtime_source_refs") if isinstance(state.get("runtime_source_refs"), dict) else {}
+    for alias, data_ref in state_refs.items():
+        if _is_mongo_ref(data_ref):
+            refs.setdefault(str(alias), deepcopy(data_ref))
+    return refs
+
+
+def _source_alias(item: dict[str, Any], index: int) -> str:
+    for key in ("source_alias", "alias", "dataset_key"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return f"previous_source_{index + 1}"
+
+
 def _load_rows(
     collection: Any,
     data_ref: dict[str, Any],
@@ -224,12 +297,14 @@ def _load_rows(
     ref_id = str(data_ref.get("ref_id") or data_ref.get("id") or "").strip()
     if not ref_id:
         return {"rows": [], "cache_hit": False, "row_count": 0, "columns": []}
-    cache_key = f"{ref_id}:full" if row_limit is None else f"{ref_id}:preview:{row_limit}"
+    ref_collection = _collection_for_ref(collection, data_ref)
+    cache_prefix = _ref_cache_key(data_ref)
+    cache_key = f"{cache_prefix}:full" if row_limit is None else f"{cache_prefix}:preview:{row_limit}"
     if cache_key in cache:
         cached = deepcopy(cache[cache_key])
         cached["cache_hit"] = True
         return cached
-    doc = _find_ref_doc(collection, ref_id, row_limit)
+    doc = _find_ref_doc(ref_collection, ref_id, row_limit)
     if not isinstance(doc, dict):
         return {"rows": [], "cache_hit": False, "row_count": 0, "columns": []}
     rows = doc.get("rows") if isinstance(doc.get("rows"), list) else doc.get("data")
@@ -241,6 +316,38 @@ def _load_rows(
     result = {"rows": clean_rows, "cache_hit": False, "row_count": row_count, "columns": columns}
     cache[cache_key] = deepcopy(result)
     return result
+
+
+def _collection_for_ref(collection: Any, data_ref: dict[str, Any]) -> Any:
+    ref_collection_name = _clean(data_ref.get("collection_name"))
+    ref_database_name = _clean(data_ref.get("database") or data_ref.get("db_name"))
+    if not ref_collection_name:
+        return collection
+    current_collection_name = _clean(getattr(collection, "name", ""))
+    current_database = getattr(collection, "database", None)
+    current_database_name = _clean(getattr(current_database, "name", ""))
+    if ref_collection_name == current_collection_name and (not ref_database_name or ref_database_name == current_database_name):
+        return collection
+    if current_database is not None:
+        if ref_database_name and ref_database_name != current_database_name:
+            client = getattr(current_database, "client", None)
+            if client is not None:
+                try:
+                    return client[ref_database_name][ref_collection_name]
+                except Exception:
+                    pass
+        try:
+            return current_database[ref_collection_name]
+        except Exception:
+            pass
+    return collection
+
+
+def _ref_cache_key(data_ref: dict[str, Any]) -> str:
+    return "|".join(
+        str(data_ref.get(key) or "")
+        for key in ("database", "db_name", "collection_name", "ref_id", "id")
+    )
 
 
 def _find_ref_doc(collection: Any, ref_id: str, row_limit: int | None) -> dict[str, Any] | None:
@@ -311,7 +418,7 @@ def _mark_preview_ref(result: dict[str, Any], data_ref: dict[str, Any], rows: li
 
 
 def _is_mongo_ref(value: Any) -> bool:
-    return isinstance(value, dict) and value.get("store") == "mongodb" and bool(value.get("ref_id"))
+    return isinstance(value, dict) and str(value.get("store") or "").lower() == "mongodb" and bool(value.get("ref_id"))
 
 
 def _payload(value: Any) -> dict[str, Any]:
@@ -405,7 +512,7 @@ class MongoDBDataLoader(Component):
             advanced=True,
         ),
         MessageTextInput(name="enabled", display_name="Enabled", value="true", advanced=True),
-        MessageTextInput(name="hydrate_mode", display_name="Hydrate Mode", value="preview", advanced=True),
+        MessageTextInput(name="hydrate_mode", display_name="Restore Mode", value="auto", advanced=True),
         MessageTextInput(name="preview_row_limit", display_name="Preview Row Limit", value="5", advanced=True),
     ]
     outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]

@@ -113,12 +113,12 @@ def render_sidebar() -> dict[str, Any]:
             <span class="config-badge {'ok' if runtime_mode == 'Python mock' or api_ready else 'warn'}">{'Ready' if runtime_mode == 'Langflow API' and api_ready else 'Mock' if runtime_mode == 'Python mock' else 'Missing'}</span>
           </div>
           <div class="config-row">
-            <div><div class="config-label">Main API</div><div class="config-env">LANGFLOW_MAIN_API_URL / FLOW_ID</div></div>
+            <div><div class="config-label">Query APIs</div><div class="config-env">ROUTER_FLOW_ID / MAIN_FLOW_ID</div></div>
             <span class="config-badge {'ok' if configured['main'] else 'warn'}">{'set' if configured['main'] else 'empty'}</span>
           </div>
           <div class="config-row">
             <div><div class="config-label">Authoring APIs</div><div class="config-env">domain/table/filter</div></div>
-            <span class="config-value">{sum(1 for value in configured.values() if value) - int(configured['main'])}/3</span>
+            <span class="config-value">{sum(1 for key in ('domain', 'table_catalog', 'main_flow_filter') if configured.get(key))}/3</span>
           </div>
           <div class="config-row">
             <div><div class="config-label">Result store</div><div class="config-env">MONGODB_RESULT_COLLECTION</div></div>
@@ -129,7 +129,7 @@ def render_sidebar() -> dict[str, Any]:
         unsafe_allow_html=True,
     )
     if runtime_mode == "Langflow API" and not api_ready:
-        st.sidebar.warning("Main Langflow API URL이 없어 질의는 실행할 수 없습니다. env 설정 전에는 Python mock을 사용하세요.")
+        st.sidebar.warning("Query Langflow API URL 또는 flow id가 없어 질의를 실행할 수 없습니다. env 설정 전에는 Python mock을 사용하세요.")
     developer_mode = st.sidebar.toggle("개발자 정보 보기", value=True)
     number_mode = st.sidebar.selectbox("숫자 표시", ["comma", "k"], format_func=lambda item: "1,000" if item == "comma" else "1.0K")
     if st.sidebar.button("세션 초기화", width="stretch"):

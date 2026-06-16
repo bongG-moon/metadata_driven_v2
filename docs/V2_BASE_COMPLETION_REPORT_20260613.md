@@ -8,7 +8,7 @@
 
 ### 1. Intent normalizer production fallback
 
-파일: `langflow_components/main_flow/04_intent_plan_normalizer.py`
+파일: `langflow_components/main_flow/08_intent_plan_normalizer.py`
 
 보강 내용:
 
@@ -26,7 +26,7 @@
 
 ### 2. Pandas executor result column normalization
 
-파일: `langflow_components/main_flow/06_pandas_code_executor.py`
+파일: `langflow_components/main_flow/17_pandas_code_executor.py`
 
 보강 내용:
 
@@ -42,7 +42,7 @@
 
 ### 3. Pandas prompt contract 강화
 
-파일: `langflow_components/main_flow/05_pandas_prompt_builder.py`
+파일: `langflow_components/main_flow/16_pandas_prompt_builder.py`
 
 보강 내용:
 
@@ -56,7 +56,7 @@
 보강 내용:
 
 - production pandas executor와 같은 결과 컬럼 표준화 규칙을 validation script에도 반영했다.
-- prompt contract도 production `05_pandas_prompt_builder.py`와 같은 방향으로 맞췄다.
+- prompt contract도 production `16_pandas_prompt_builder.py`와 같은 방향으로 맞췄다.
 
 ### 5. 테스트 추가
 

@@ -23,17 +23,17 @@ def load_component(path: str):
 def test_langflow_llm_node_style_flow_contract(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_prompt_builder = load_component("langflow_components/main_flow/03_intent_prompt_builder.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
-    dummy_retriever = load_component("langflow_components/data_retrieval_flow/01_dummy_data_retriever.py")
-    retrieval_adapter = load_component("langflow_components/main_flow/05_retrieval_payload_adapter.py")
-    data_store = load_component("langflow_components/main_flow/08_mongodb_data_store.py")
+    intent_prompt_builder = load_component("langflow_components/main_flow/07_intent_prompt_builder.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
+    dummy_retriever = load_component("langflow_components/main_flow/09_dummy_data_retriever.py")
+    retrieval_adapter = load_component("langflow_components/main_flow/15_retrieval_payload_adapter.py")
+    data_store = load_component("langflow_components/main_flow/18_mongodb_data_store.py")
     data_loader = load_component("langflow_components/main_flow/01_mongodb_data_loader.py")
-    pandas_prompt_builder = load_component("langflow_components/main_flow/06_pandas_prompt_builder.py")
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
-    answer_prompt_builder = load_component("langflow_components/main_flow/09_answer_prompt_builder.py")
-    answer_builder = load_component("langflow_components/main_flow/10_answer_response_builder.py")
-    answer_message_adapter = load_component("langflow_components/main_flow/11_answer_message_adapter.py")
+    pandas_prompt_builder = load_component("langflow_components/main_flow/16_pandas_prompt_builder.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
+    answer_prompt_builder = load_component("langflow_components/main_flow/19_answer_prompt_builder.py")
+    answer_builder = load_component("langflow_components/main_flow/20_answer_response_builder.py")
+    answer_message_adapter = load_component("langflow_components/main_flow/21_answer_message_adapter.py")
 
     payload = request_loader.build_request_payload("오늘 전체 재공 수량 알려줘", "test-session")
     payload = data_loader.load_payload_from_mongodb(payload, enabled="false")
@@ -115,10 +115,33 @@ def test_langflow_llm_node_style_flow_contract(monkeypatch: Any) -> None:
     assert "```python" in playground_message
 
 
+def test_intent_prompt_exposes_dataset_specific_date_formats(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
+    intent_prompt_builder = load_component("langflow_components/main_flow/07_intent_prompt_builder.py")
+
+    payload = request_loader.build_request_payload("show today's production, wip, and target", "test-session")
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+
+    prompt = intent_prompt_builder.build_intent_prompt_payload(payload)["prompt"]
+    metadata_json = prompt.split("Metadata summary:\n", 1)[1].split("\n\nPrevious state summary:", 1)[0]
+    summary = json.loads(metadata_json)
+
+    production = summary["datasets"]["production_today"]
+    target = summary["datasets"]["target"]
+    assert production["required_param_mappings"] == {"DATE": ["WORK_DT"]}
+    assert production["date_format"] == "YYYYMMDD"
+    assert production["date_param_value_for_current_request"] == "20260612"
+    assert target["date_format"] == "YYYY-MM-DD"
+    assert target["date_param_value_for_current_request"] == "2026-06-12"
+    assert "Do not output 2026-06-12 for that dataset" in prompt
+    assert "Never copy target's YYYY-MM-DD format to production_today" in prompt
+
+
 def test_intent_normalizer_builds_recipe_jobs_when_llm_omits_jobs(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성율을 보여줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -159,7 +182,7 @@ def test_intent_normalizer_builds_recipe_jobs_when_llm_omits_jobs(monkeypatch: A
 def test_intent_normalizer_builds_recipe_jobs_when_llm_omits_specialized_datasets(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 생산달성율을 보여줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -183,7 +206,7 @@ def test_intent_normalizer_builds_recipe_jobs_when_llm_omits_specialized_dataset
 def test_intent_normalizer_does_not_build_specialized_jobs_without_recipe_metadata(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 생산달성율을 보여줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -204,7 +227,7 @@ def test_intent_normalizer_does_not_build_specialized_jobs_without_recipe_metada
 def test_intent_normalizer_recipe_grain_policy_uses_question_scope(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 전체 생산달성율을 보여줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -223,7 +246,7 @@ def test_intent_normalizer_recipe_grain_policy_uses_question_scope(monkeypatch: 
 def test_intent_normalizer_detail_request_overrides_recipe_grouping(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload(
         "오늘 DA공정에서 재공, 생산량과 목표값 세부 데이터를 집계하지 말고 보여줘",
@@ -259,7 +282,7 @@ def test_intent_normalizer_detail_request_overrides_recipe_grouping(monkeypatch:
 def test_intent_normalizer_recipe_defaults_populate_plan(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 INPUT계획대비 D/A공정에서 생산량이 저조한 제품을 알려줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -279,7 +302,7 @@ def test_intent_normalizer_recipe_defaults_populate_plan(monkeypatch: Any) -> No
 def test_intent_normalizer_recipe_promotes_generic_lot_quantity_plan(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload(
         "현재 DA공정에서 재공 lot이 몇개인지, wafer가 몇개인지, die수량은 몇개인지 알려줘",
@@ -312,7 +335,7 @@ def test_intent_normalizer_recipe_promotes_generic_lot_quantity_plan(monkeypatch
 def test_intent_normalizer_recipe_aligns_history_dataset_for_date_split(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("어제 생산량과 오늘 생산계획의 차이수량을 제품별로 알려줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -344,7 +367,7 @@ def test_intent_normalizer_recipe_aligns_history_dataset_for_date_split(monkeypa
 def test_intent_normalizer_builds_generic_rank_fallback_step(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 재공 상위 3개 보여줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -380,7 +403,7 @@ def test_intent_normalizer_builds_generic_rank_fallback_step(monkeypatch: Any) -
 def test_intent_normalizer_absorbs_loose_rank_fields_before_fallback(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("현재 DA공정에서 재공이 가장 많은 제품 알려줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -426,7 +449,7 @@ def test_intent_normalizer_absorbs_loose_rank_fields_before_fallback(monkeypatch
 def test_intent_normalizer_augments_existing_jobs_from_metadata(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성율을 보여줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -468,7 +491,7 @@ def test_intent_normalizer_augments_existing_jobs_from_metadata(monkeypatch: Any
 def test_intent_normalizer_uses_product_terms_for_existing_jobs(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 LPDDR5 W/B 공정 재공과 생산량을 보여줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -493,7 +516,7 @@ def test_intent_normalizer_uses_product_terms_for_existing_jobs(monkeypatch: Any
 def test_intent_normalizer_replaces_wrong_product_alias_filter_with_metadata_condition(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("HBM 제품의 장비 모델별 현황을 보여줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -522,7 +545,7 @@ def test_intent_normalizer_replaces_wrong_product_alias_filter_with_metadata_con
 def test_intent_normalizer_aligns_followup_equipment_to_state_products(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("그 제품에 물려 있는 장비를 보여줘", "test-session")
     payload["state"] = {
@@ -556,7 +579,7 @@ def test_intent_normalizer_aligns_followup_equipment_to_state_products(monkeypat
 def test_intent_normalizer_uses_state_product_key_summary_without_full_rows(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("그 제품이 물려 있는 설비를 보여줘", "test-session")
     payload["state"] = {
@@ -592,7 +615,7 @@ def test_intent_normalizer_uses_state_product_key_summary_without_full_rows(monk
 def test_intent_normalizer_prunes_lot_status_for_followup_equipment_count(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("이 제품의 이 공정에 할당된 장비 대수를 알려줘", "test-session")
     payload["state"] = {
@@ -630,7 +653,7 @@ def test_intent_normalizer_prunes_lot_status_for_followup_equipment_count(monkey
 
 def test_retrieval_adapter_adds_standard_columns_from_physical_catalog_aliases(monkeypatch: Any) -> None:
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    retrieval_adapter = load_component("langflow_components/main_flow/05_retrieval_payload_adapter.py")
+    retrieval_adapter = load_component("langflow_components/main_flow/15_retrieval_payload_adapter.py")
 
     payload = load_seed_metadata_payload(metadata_loader, {"state": {}}, monkeypatch)
     retrieval_payload = {
@@ -655,7 +678,7 @@ def test_retrieval_adapter_adds_standard_columns_from_physical_catalog_aliases(m
 def test_intent_normalizer_marks_full_state_hydrate_for_previous_result_row_analysis(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("이전 결과 전체 데이터를 다시 보여줘", "test-session")
     payload["state"] = {
@@ -688,7 +711,7 @@ def test_intent_normalizer_marks_full_state_hydrate_for_previous_result_row_anal
 def test_intent_normalizer_maps_logical_required_columns_to_dataset_columns(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("현재 작업대기 Lot 수량을 공정별로 알려줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -728,7 +751,7 @@ def test_intent_normalizer_maps_logical_required_columns_to_dataset_columns(monk
 def test_intent_normalizer_repairs_lot_count_kind_from_generic_aggregate(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("현재 작업대기 Lot 수량을 공정별로 알려줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -773,7 +796,7 @@ def test_intent_normalizer_repairs_lot_count_kind_from_generic_aggregate(monkeyp
 def test_intent_normalizer_adds_primary_quantity_to_equipment_columns(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
-    intent_normalizer = load_component("langflow_components/main_flow/04_intent_plan_normalizer.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
 
     payload = request_loader.build_request_payload("오늘 HBM 장비 보유 현황을 EQP_MODEL별로 알려줘", "test-session")
     payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
@@ -797,7 +820,7 @@ def test_intent_normalizer_adds_primary_quantity_to_equipment_columns(monkeypatc
 
 
 def test_pandas_executor_normalizes_llm_result_column_names() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "rank_wip_then_join_production",
@@ -827,7 +850,7 @@ def test_pandas_executor_normalizes_llm_result_column_names() -> None:
 
 
 def test_pandas_executor_rewrites_pd_inf_for_pandas_compatibility() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     payload = {
         "intent_plan": {"analysis_kind": "production_wip_target_rate", "product_grain": []},
         "state": {},
@@ -852,7 +875,7 @@ def test_pandas_executor_rewrites_pd_inf_for_pandas_compatibility() -> None:
 
 
 def test_pandas_executor_normalizes_common_result_aliases() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     join_payload = {
         "intent_plan": {"analysis_kind": "aggregate_join", "product_grain": ["MODE"]},
         "state": {},
@@ -924,7 +947,7 @@ def test_pandas_executor_normalizes_common_result_aliases() -> None:
 
 
 def test_answer_message_adapter_escapes_tilde_strikethrough_markdown() -> None:
-    answer_message_adapter = load_component("langflow_components/main_flow/11_answer_message_adapter.py")
+    answer_message_adapter = load_component("langflow_components/main_flow/21_answer_message_adapter.py")
     payload = {
         "answer_message": "결과는 ~~HOLD~~ 상태로 표시됩니다.",
         "data": {

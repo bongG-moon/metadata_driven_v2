@@ -59,21 +59,31 @@ def test_main_flow_files_use_clean_sequential_numbering() -> None:
         "00_request_state_loader.py",
         "01_mongodb_data_loader.py",
         "02_metadata_context_loader.py",
-        "03_intent_prompt_builder.py",
-        "04_intent_plan_normalizer.py",
-        "05_retrieval_payload_adapter.py",
-        "06_pandas_prompt_builder.py",
-        "07_pandas_code_executor.py",
-        "08_mongodb_data_store.py",
-        "09_answer_prompt_builder.py",
-        "10_answer_response_builder.py",
-        "11_answer_message_adapter.py",
-        "12_api_response_builder.py",
+        "03_route_candidate_builder.py",
+        "04_route_classifier_prompt_builder.py",
+        "05_route_classifier_normalizer.py",
+        "06_metadata_qa_response_builder.py",
+        "07_intent_prompt_builder.py",
+        "08_intent_plan_normalizer.py",
+        "09_dummy_data_retriever.py",
+        "10_oracle_query_retriever.py",
+        "11_h_api_retriever.py",
+        "12_datalake_retriever.py",
+        "13_goodocs_retriever.py",
+        "14_source_retrieval_merger.py",
+        "15_retrieval_payload_adapter.py",
+        "16_pandas_prompt_builder.py",
+        "17_pandas_code_executor.py",
+        "18_mongodb_data_store.py",
+        "19_answer_prompt_builder.py",
+        "20_answer_response_builder.py",
+        "21_answer_message_adapter.py",
+        "22_api_response_builder.py",
     ]
     actual_files = [path.name for path in sorted((PROJECT_ROOT / "langflow_components" / "main_flow").glob("*.py"))]
     assert actual_files == expected_files
 
-    for index, path in enumerate(sorted((PROJECT_ROOT / "langflow_components" / "main_flow").glob("*.py"))):
+    for path in sorted((PROJECT_ROOT / "langflow_components" / "main_flow").glob("*.py")):
         module_name = f"main_flow_order_{path.stem}".replace(".", "_")
         spec = importlib.util.spec_from_file_location(module_name, path)
         module = importlib.util.module_from_spec(spec)
@@ -84,8 +94,9 @@ def test_main_flow_files_use_clean_sequential_numbering() -> None:
             for value in module.__dict__.values()
             if isinstance(value, type) and any("Component" in base.__name__ for base in value.__bases__)
         ]
+        expected_prefix = path.stem.split("_", 1)[0].upper()
         assert display_names, f"{path} must define a display_name"
-        assert display_names[0].startswith(f"{index:02d} "), f"{path.name} display_name should start with {index:02d}"
+        assert display_names[0].startswith(f"{expected_prefix} "), f"{path.name} display_name should start with {expected_prefix}"
 
 
 def test_mongodb_metadata_components_expose_full_collection_names() -> None:
@@ -171,3 +182,4 @@ def _component_input(relative_path: str, input_name: str):
         if getattr(input_item, "name", None) == input_name:
             return input_item
     raise AssertionError(f"{path} must expose input {input_name}")
+

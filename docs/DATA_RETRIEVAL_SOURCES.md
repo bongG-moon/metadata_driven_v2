@@ -57,14 +57,14 @@ Datalake Langflow component는 LakeHouse 방식으로 실행합니다. 입력으
 
 ## Langflow Components
 
-`langflow_components/data_retrieval_flow/`에는 standalone custom component 예시가 들어 있습니다.
+`langflow_components/main_flow/`에는 main flow에서 바로 연결하는 source retriever custom component가 들어 있습니다.
 
-- `01_dummy_data_retriever.py`: 모든 dataset에 대해 충분히 큰 제조 dummy data 생성
-- `02_oracle_query_retriever.py`: Oracle source job 처리 및 `oracledb` 실제 조회
-- `03_h_api_retriever.py`: H-API source job 처리 및 token이 있을 때 실제 POST 조회
-- `04_datalake_retriever.py`: Datalake source job 처리 및 LakeHouse 실제 조회
-- `05_goodocs_retriever.py`: Goodocs source job 처리 및 adapter/module 기반 문서 조회
-- `06_source_retrieval_merger.py`: 여러 source 결과를 하나의 retrieval payload로 병합
+- `09_dummy_data_retriever.py`: 모든 dataset에 대해 충분히 큰 제조 dummy data 생성
+- `10_oracle_query_retriever.py`: Oracle source job 처리 및 `oracledb` 실제 조회
+- `11_h_api_retriever.py`: H-API source job 처리 및 token이 있을 때 실제 POST 조회
+- `12_datalake_retriever.py`: Datalake source job 처리 및 LakeHouse 실제 조회
+- `13_goodocs_retriever.py`: Goodocs source job 처리 및 adapter/module 기반 문서 조회
+- `14_source_retrieval_merger.py`: 여러 source 결과를 하나의 retrieval payload로 병합
 
 각 파일은 Langflow custom component에 하나씩 붙여 넣어도 동작하도록 sibling import 없이 작성했습니다.
 불필요한 port를 늘리지 않기 위해 입력은 payload와 source별 credential/config 정도만 둡니다.

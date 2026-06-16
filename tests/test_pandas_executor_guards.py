@@ -18,7 +18,7 @@ def load_component(path: str):
 
 
 def test_pandas_executor_drops_redundant_source_alias_columns_before_llm_code_runs() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "low_output_vs_target",
@@ -86,7 +86,7 @@ def test_pandas_executor_drops_redundant_source_alias_columns_before_llm_code_ru
 
 
 def test_pandas_executor_normalizes_lot_process_column_alias() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     payload = {
         "intent_plan": {"analysis_kind": "lot_count_by_process"},
         "state": {},
@@ -106,7 +106,7 @@ def test_pandas_executor_normalizes_lot_process_column_alias() -> None:
 
 
 def test_pandas_executor_adds_missing_required_detail_columns() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "detail_rows",
@@ -140,7 +140,7 @@ def test_pandas_executor_adds_missing_required_detail_columns() -> None:
 
 
 def test_pandas_executor_derives_rank_group_from_oper_name() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "rank_wip_then_join_production",
@@ -163,7 +163,7 @@ def test_pandas_executor_derives_rank_group_from_oper_name() -> None:
 
 
 def test_pandas_executor_falls_back_for_lot_quantity_summary_to_frame_error() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/07_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "lot_quantity_summary",

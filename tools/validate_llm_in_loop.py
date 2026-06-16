@@ -251,7 +251,7 @@ def build_intent_prompt(question: str, metadata: dict[str, Any], state: dict[str
             json.dumps(SUPPORTED_ANALYSIS_KINDS, ensure_ascii=False),
             "",
             "Metadata summary:",
-            json.dumps(metadata_summary(metadata), ensure_ascii=False, indent=2),
+            json.dumps(metadata_summary(metadata, request_date), ensure_ascii=False, indent=2),
             "",
             "Previous state summary:",
             json.dumps(state_summary(state), ensure_ascii=False, indent=2),
@@ -265,7 +265,12 @@ def build_intent_prompt(question: str, metadata: dict[str, Any], state: dict[str
                     "intent_type": "single_retrieval_analysis | multi_source_analysis | multi_step_analysis | detail_lookup | followup_transform | finish",
                     "analysis_kind": "one supported analysis_kind",
                     "datasets": ["dataset_key"],
-                    "params_by_dataset": {"dataset_key": {"DATE": "YYYYMMDD or YYYY-MM-DD", "LOT_ID": "optional"}},
+                    "params_by_dataset": {
+                        "dataset_key": {
+                            "DATE": "copy metadata.datasets[dataset_key].date_param_value_for_current_request exactly",
+                            "LOT_ID": "optional",
+                        }
+                    },
                     "filters": [{"field": "metadata filter field", "op": "eq|in|not_empty|tuple_in", "value": "optional", "values": []}],
                     "retrieval_jobs": [
                         {
@@ -275,6 +280,8 @@ def build_intent_prompt(question: str, metadata: dict[str, Any], state: dict[str
                             "params": {},
                             "filters": [],
                             "required_columns": [],
+                            "required_param_mappings": {"DATE": ["physical column copied from metadata"]},
+                            "date_format": "copy metadata.datasets[dataset_key].date_format when present",
                         }
                     ],
                     "step_plan": [{"step_id": "short id", "operation": "analysis operation", "source_alias": "source alias"}],
@@ -291,6 +298,11 @@ def build_intent_prompt(question: str, metadata: dict[str, Any], state: dict[str
             "- Use intent_type=multi_source_analysis for questions that need multiple datasets.",
             "- Use intent_type=multi_step_analysis when one step creates keys that the next step must reuse.",
             "- If analysis_kind=rank_wip_then_join_production, intent_type must be multi_step_analysis.",
+            "- DATE params are dataset-specific. For each dataset, read metadata.datasets[dataset_key].date_format and date_param_value_for_current_request. Use that exact value in params_by_dataset and retrieval_jobs[].params.DATE.",
+            "- If a dataset date_format is YYYYMMDD, DATE must look like 20260612. Do not output 2026-06-12 for that dataset.",
+            "- If a dataset date_format is YYYY-MM-DD, DATE must look like 2026-06-12. Do not output 20260612 for that dataset.",
+            "- Never copy target's YYYY-MM-DD format to production_today, wip_today, or other datasets unless that dataset's own metadata says YYYY-MM-DD.",
+            "- When a retrieval job contains DATE params, also copy required_param_mappings and date_format from the dataset metadata into that retrieval_jobs item when present.",
             "- Use intent_type=followup_transform when the question says 이 제품/그 제품/해당 제품 and needs previous state.",
             "- For follow-up equipment questions, use only equipment_status unless the user explicitly asks for Lot, Hold, wafer, or die data.",
             "- For follow-up 장비 현황/설비 현황 questions, use analysis_kind=equipment_for_previous_products and return equipment detail rows.",
@@ -318,7 +330,7 @@ def build_intent_prompt(question: str, metadata: dict[str, Any], state: dict[str
     )
 
 
-def metadata_summary(metadata: dict[str, Any]) -> dict[str, Any]:
+def metadata_summary(metadata: dict[str, Any], request_date: str) -> dict[str, Any]:
     datasets = {}
     for key, item in metadata["table_catalog"]["datasets"].items():
         datasets[key] = {
@@ -326,6 +338,9 @@ def metadata_summary(metadata: dict[str, Any]) -> dict[str, Any]:
             "date_scope": item.get("date_scope", ""),
             "source_type": item.get("source_type"),
             "required_params": item.get("required_params", []),
+            "required_param_mappings": item.get("required_param_mappings", {}),
+            "date_format": dataset_date_format(item),
+            "date_param_value_for_current_request": date_param_value_for_dataset(request_date, item),
             "quantity": item.get("primary_quantity_column"),
             "filter_fields": sorted(item.get("filter_mappings", {}).keys()),
             "columns": item.get("columns", []),
@@ -337,6 +352,34 @@ def metadata_summary(metadata: dict[str, Any]) -> dict[str, Any]:
         "product_key_columns": metadata["domain_items"].get("product_key_columns", []),
         "datasets": datasets,
     }
+
+
+def dataset_date_format(dataset: dict[str, Any]) -> str:
+    explicit = str(dataset.get("date_format") or "").strip()
+    if explicit:
+        return explicit
+    date_keys = set(dataset.get("required_params") or [])
+    if isinstance(dataset.get("required_param_mappings"), dict):
+        date_keys.update(dataset["required_param_mappings"].keys())
+    if isinstance(dataset.get("filter_mappings"), dict):
+        date_keys.update(dataset["filter_mappings"].keys())
+    if "DATE" in date_keys:
+        return "YYYYMMDD"
+    return ""
+
+
+def date_param_value_for_dataset(request_date: str, dataset: dict[str, Any]) -> str:
+    fmt = dataset_date_format(dataset)
+    clean = str(request_date or "").strip().replace("-", "").replace("/", "").replace(".", "")
+    if not clean:
+        return ""
+    if fmt == "YYYY-MM-DD" and len(clean) == 8:
+        return f"{clean[0:4]}-{clean[4:6]}-{clean[6:8]}"
+    if fmt == "YYYY/MM/DD" and len(clean) == 8:
+        return f"{clean[0:4]}/{clean[4:6]}/{clean[6:8]}"
+    if fmt == "YYYY.MM.DD" and len(clean) == 8:
+        return f"{clean[0:4]}.{clean[4:6]}.{clean[6:8]}"
+    return clean
 
 
 def state_summary(state: dict[str, Any]) -> dict[str, Any]:

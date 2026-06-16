@@ -67,6 +67,31 @@ def test_normalize_query_response_accepts_legacy_flat_api_response_shape() -> No
     assert result["analysis"]["analysis_code"] == "legacy_code()"
 
 
+def test_normalize_query_response_collects_state_followup_refs() -> None:
+    result = normalize_query_response(
+        {
+            "api_response": {
+                "answer_message": "ok",
+                "data": {"rows": [], "columns": [], "row_count": 0, "data_ref": {}},
+                "state": {
+                    "followup_source_results": [
+                        {
+                            "source_alias": "wip_data",
+                            "data_ref": {
+                                "store": "mongodb",
+                                "ref_id": "source-ref",
+                                "collection_name": "agent_v2_result_store",
+                            },
+                        }
+                    ]
+                },
+            }
+        }
+    )
+
+    assert result["data_refs"][0]["ref_id"] == "source-ref"
+
+
 def test_normalize_query_response_preserves_metadata_qa_shape() -> None:
     result = normalize_query_response(
         {
