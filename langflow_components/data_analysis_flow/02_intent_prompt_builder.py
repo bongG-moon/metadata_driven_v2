@@ -161,6 +161,8 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "- For top/bottom/rank questions, do not return a nested rank object. Put ranking values in top-level metric/top_n/rank_order and repeat them in the rank step_plan item.",
             "- For 가장 많은/most/highest/top questions without an explicit count, use top_n=1 and rank_order=desc.",
             "- For top/bottom/rank questions followed by a dependent lookup, express rank first and dependent retrieval/analysis steps second.",
+            "- For top/rank questions followed by a dependent lookup, count, detail, or oldest/longest selection, prefer a matching metadata analysis_recipes item and express the rank step before the dependent step.",
+            "- For dependent counts, preserve the count source and count_column from metadata instead of substituting another dataset.",
             "- Do not use loose top-level group_by/output_columns as substitutes for step_plan. Use product_grain and analysis_output_columns, and include group_by/output_columns inside the relevant step when needed.",
             "- Use aggregate_wip_total only for one-dataset total/sum questions that metadata identifies as WIP/current quantity work.",
             "- Use aggregate_join only for a simple multi-source join when no matching analysis_recipes item gives a more specific plan.",

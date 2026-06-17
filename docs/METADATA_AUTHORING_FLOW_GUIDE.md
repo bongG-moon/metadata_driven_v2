@@ -103,6 +103,8 @@ metric은 계산식을 코드에 박지 않고 domain metadata에 둔다. 관련
 
 `group_by` 컬럼은 recipe에 고정하지 않는 것을 기본으로 한다. 작업자 질문이 “전체”라고 하면 전체 합계로, “제품별”이라고 하면 제품 기준으로, “공정별”이라고 하면 공정 기준으로 동작해야 하므로 recipe에는 `grain_policy`를 남긴다.
 
+비슷한 단어가 들어갔다고 모든 recipe를 적용하면 안 되는 경우에는 `required_question_cues`와 `forbidden_question_cues`를 함께 둔다. 예를 들어 “재공 top 공정 + hold LOT + 평균 IN TAT” recipe는 재공, 공정, hold, IN TAT 단서가 모두 있어야 적용되고, “생산량 상위 제품 + 장비 대수” 질문은 별도 recipe로 분리한다.
+
 ```json
 {
   "section": "analysis_recipes",

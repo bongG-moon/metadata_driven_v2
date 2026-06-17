@@ -29,13 +29,14 @@ def retrieve_dummy_data(payload_value: Any) -> dict[str, Any]:
 
 def _source_result(job: dict[str, Any], source_type: str) -> dict[str, Any]:
     rows = _dummy_rows(job, source_type)
+    columns = list(rows[0].keys()) if rows else [str(column) for column in (job.get("required_columns") or [])]
     return {
         "success": True,
         "dataset_key": job.get("dataset_key", ""),
         "source_alias": job.get("source_alias", job.get("dataset_key", "")),
         "source_type": source_type,
         "data": rows,
-        "columns": list(rows[0].keys()) if rows else [],
+        "columns": columns,
         "row_count": len(rows),
         "summary": f"{source_type} dummy rows: {len(rows)}",
         "applied_params": deepcopy(job.get("params", {})),
@@ -63,10 +64,67 @@ def _dummy_rows(job: dict[str, Any], source_type: str) -> list[dict[str, Any]]:
         rows = _capacity_rows(date_value)
     else:
         rows = _process_product_rows(date_value, "PRODUCTION")
+    rows = _apply_job_filters(rows, job.get("filters", []))
     columns = job.get("required_columns")
     if columns:
         return [{column: row.get(column) for column in columns if column in row} for row in rows]
     return rows
+
+
+def _apply_job_filters(rows: list[dict[str, Any]], filters: Any) -> list[dict[str, Any]]:
+    if not isinstance(filters, list) or not filters:
+        return rows
+    filtered = list(rows)
+    for condition in filters:
+        if not isinstance(condition, dict):
+            continue
+        field = str(condition.get("field") or "").strip()
+        op = str(condition.get("op") or "eq").strip().lower()
+        if not field or field == "PRODUCT_GRAIN" or op == "from_state":
+            continue
+        values = condition.get("values")
+        if values is None and "value" in condition:
+            values = [condition.get("value")]
+        elif not isinstance(values, list):
+            values = [values]
+        candidates = _field_candidates(field)
+        filtered = [row for row in filtered if _row_matches_filter(row, candidates, op, values)]
+    return filtered
+
+
+def _row_matches_filter(row: dict[str, Any], fields: list[str], op: str, values: list[Any]) -> bool:
+    present_values = [row[field] for field in fields if field in row]
+    if not present_values:
+        return True
+    normalized_values = {_normalize_filter_value(value) for value in values}
+    if op in {"in", "eq", "="}:
+        return any(_normalize_filter_value(value) in normalized_values for value in present_values)
+    if op in {"not_in", "ne", "!="}:
+        return all(_normalize_filter_value(value) not in normalized_values for value in present_values)
+    if op in {"contains", "like"}:
+        return any(any(str(target) in str(value) for target in normalized_values) for value in present_values)
+    return True
+
+
+def _field_candidates(field: str) -> list[str]:
+    aliases = {
+        "DATE": ["DATE", "WORK_DT", "BASE_DT"],
+        "OPER_NAME": ["OPER_NAME", "OPER_SHORT_DESC", "OPER_ID"],
+        "OPER_SHORT_DESC": ["OPER_SHORT_DESC", "OPER_NAME", "OPER_ID"],
+        "PKG_TYPE1": ["PKG_TYPE1", "PKG1", "PKG_TYP"],
+        "PKG_TYPE2": ["PKG_TYPE2", "PKG2", "PKG_TYP_2", "PKG_TYP2"],
+        "MCP_NO": ["MCP_NO", "MCP NO", "MCPSALENO", "PROD_GRP_ID", "MCP_SALE_CD"],
+        "TECH": ["TECH", "TECH_NM"],
+        "DEN": ["DEN", "DEN_TYP"],
+        "MODE": ["MODE", "Mode", "PROD_TYP"],
+        "LEAD": ["LEAD", "LEAD_CNT"],
+        "EQP_ID": ["EQP_ID", "EQPID"],
+    }
+    return aliases.get(field, [field])
+
+
+def _normalize_filter_value(value: Any) -> str:
+    return str(value if value is not None else "").strip().upper()
 
 
 def _process_product_rows(date_value: str, quantity_column: str) -> list[dict[str, Any]]:

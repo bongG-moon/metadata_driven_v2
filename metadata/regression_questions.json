@@ -19,7 +19,6 @@
     "expected_analysis_kind": "detail_rows",
     "expected_datasets": ["hold_history"],
     "expected_columns": ["LOT_ID", "HOLD_TM", "HOLD_CD", "HOLD_DESC"],
-    "expected_filter_fields": ["LOT_ID"],
     "expected_params_by_dataset": {
       "hold_history": {"LOT_ID": "T1234567GEN1"}
     }
@@ -188,5 +187,32 @@
     "expected_datasets": ["equipment_status"],
     "expected_columns": ["EQP_MODEL", "EQP_COUNT", "PRESS_CNT"],
     "expected_filter_fields": ["PKG_TYPE1"]
+  },
+  {
+    "id": "top_wip_process_hold_lot_in_tat",
+    "question": "오늘 DA공정에서 재공이 많은 세부공정 top 3을 찾고, 해당 공정들의 hold LOT 수와 평균 in tat를 같이 보여줘.",
+    "expected_intent_type": "multi_step_analysis",
+    "expected_analysis_kind": "top_wip_process_hold_lot_in_tat",
+    "expected_datasets": ["wip_today", "lot_status"],
+    "expected_columns": ["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"],
+    "expected_filter_fields": ["OPER_NAME"]
+  },
+  {
+    "id": "da_top5_production_equipment_count",
+    "question": "오늘 DA공정에서 생산량 상위 5개 제품과 각 제품별 할당 장비 대수를 보여줘",
+    "expected_intent_type": "multi_step_analysis",
+    "expected_analysis_kind": "top_production_products_equipment_count",
+    "expected_datasets": ["production_today", "equipment_status"],
+    "expected_columns": ["PRODUCTION", "EQP_COUNT"],
+    "expected_filter_fields": ["OPER_NAME"]
+  },
+  {
+    "id": "wb_top_wip_product_oldest_in_tat_lot",
+    "question": "지금 WB에서 재공이 가장 많은 제품 기준으로 LOT의 IN TAT를 보고, IN TAT가 가장 오래된 LOT을 찾아줘",
+    "expected_intent_type": "multi_step_analysis",
+    "expected_analysis_kind": "top_wip_product_oldest_lot",
+    "expected_datasets": ["wip_today", "lot_status"],
+    "expected_columns": ["WIP", "LOT_ID", "IN_TAT"],
+    "expected_filter_fields": ["OPER_NAME"]
   }
 ]

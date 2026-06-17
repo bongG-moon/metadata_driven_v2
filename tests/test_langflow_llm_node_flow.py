@@ -1007,6 +1007,94 @@ def test_intent_normalizer_does_not_hardcode_top_wip_process_lot_recipe(monkeypa
     assert [job["dataset_key"] for job in payload["retrieval_jobs"]] == ["lot_status"]
 
 
+def test_intent_normalizer_does_not_apply_wip_lot_recipe_to_production_equipment_question(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/data_analysis_flow/00_analysis_request_loader.py")
+    metadata_loader = load_component("langflow_components/data_analysis_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/data_analysis_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload(
+        "오늘 DA공정에서 생산량 상위 5개 제품과 각 제품별 할당 장비 대수를 보여줘",
+        "test-session",
+    )
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "multi_step_analysis",
+        "analysis_kind": "rank_top_n",
+        "datasets": ["production_today", "equipment_status"],
+        "retrieval_jobs": [
+            {"dataset_key": "production_today", "source_alias": "production_data"},
+            {"dataset_key": "equipment_status", "source_alias": "equipment_data"},
+        ],
+        "step_plan": [
+            {"step_id": "rank_top_production_products", "operation": "rank_top_n", "source_alias": "production_data", "metric": "PRODUCTION", "top_n": 5},
+            {"step_id": "get_equipment_count", "operation": "aggregate_join", "source_alias": "equipment_data", "metric": "EQPID"},
+        ],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+    plan = payload["intent_plan"]
+    jobs = {job["dataset_key"]: job for job in payload["retrieval_jobs"]}
+
+    assert plan["analysis_kind"] == "top_production_products_equipment_count"
+    assert plan["matched_analysis_recipe"] == "top_production_products_equipment_count"
+    assert plan["datasets"] == ["production_today", "equipment_status"]
+    assert [step["operation"] for step in plan["step_plan"]] == ["rank_top_n", "equipment_count_by_product", "left_join"]
+    assert plan["step_plan"][0]["metric"] == "PRODUCTION"
+    assert plan["step_plan"][0]["top_n"] == 5
+    assert plan["step_plan"][1]["count_column"] == "EQPID"
+    assert jobs["production_today"]["source_alias"] == "production_data"
+    assert jobs["equipment_status"]["source_alias"] == "equipment_data"
+    assert "EQPID" in jobs["equipment_status"]["required_columns"]
+
+
+def test_intent_normalizer_applies_top_wip_product_oldest_lot_recipe(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/data_analysis_flow/00_analysis_request_loader.py")
+    metadata_loader = load_component("langflow_components/data_analysis_flow/01_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/data_analysis_flow/03_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload(
+        "지금 WB에서 재공이 가장 많은 제품 기준으로 LOT의 IN TAT를 보고, IN TAT가 가장 오래된 LOT을 찾아줘",
+        "test-session",
+    )
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "multi_step_analysis",
+        "analysis_kind": "none",
+        "datasets": ["wip_today", "lot_status"],
+        "retrieval_jobs": [
+            {"dataset_key": "wip_today", "source_alias": "wip_data"},
+            {"dataset_key": "lot_status", "source_alias": "lot_data"},
+        ],
+        "step_plan": [
+            {"step_id": "get_wb_wip", "operation": "aggregate_total", "source_alias": "wip_data", "metric": "WIP"},
+            {"step_id": "get_top_in_tat_lot", "operation": "rank_top_n", "source_alias": "lot_data", "metric": "IN_TAT", "top_n": 1},
+        ],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+    plan = payload["intent_plan"]
+    jobs = {job["dataset_key"]: job for job in payload["retrieval_jobs"]}
+
+    assert plan["analysis_kind"] == "top_wip_product_oldest_lot"
+    assert plan["matched_analysis_recipe"] == "top_wip_product_oldest_lot"
+    assert plan["route"] == "multi_retrieval"
+    assert plan["datasets"] == ["wip_today", "lot_status"]
+    assert plan["analysis_output_columns"] == ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "WIP", "LOT_ID", "IN_TAT"]
+    assert [step["step_id"] for step in plan["step_plan"]] == [
+        "rank_top_wip_product",
+        "find_oldest_lot_for_top_product",
+        "join_top_product_and_oldest_lot",
+    ]
+    assert plan["step_plan"][0]["metric"] == "WIP"
+    assert plan["step_plan"][1]["filter_from_step"] == "rank_top_wip_product"
+    assert plan["step_plan"][1]["metric"] == "IN_TAT"
+    assert plan["step_plan"][1]["rank_order"] == "desc"
+    assert jobs["wip_today"]["source_alias"] == "wip_data"
+    assert jobs["lot_status"]["source_alias"] == "lot_data"
+    assert "WIP" in jobs["wip_today"]["required_columns"]
+    assert "IN_TAT" in jobs["lot_status"]["required_columns"]
+
+
 def test_intent_normalizer_adds_primary_quantity_to_equipment_columns(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/data_analysis_flow/00_analysis_request_loader.py")
     metadata_loader = load_component("langflow_components/data_analysis_flow/01_metadata_context_loader.py")
@@ -1140,6 +1228,82 @@ def test_pandas_executor_falls_back_when_llm_returns_empty_contract_for_wip_lot_
     assert result["analysis"]["rows"][0]["WIP"] == 90
     assert result["analysis"]["rows"][0]["LOT_ID"] == "LOT-B2"
     assert result["analysis"]["rows"][0]["IN_TAT"] == 300
+    assert "executor_fallback" in result["analysis"]["analysis_code"]
+
+
+def test_pandas_executor_falls_back_from_step_plan_primitives_for_production_equipment_count() -> None:
+    pandas_executor = load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py")
+    product_grain = ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO"]
+    payload = {
+        "intent_plan": {
+            "analysis_kind": "generic_recipe_sequence",
+            "product_grain": product_grain,
+            "top_n": 2,
+            "analysis_output_columns": [*product_grain, "PRODUCTION", "EQP_COUNT"],
+            "retrieval_jobs": [
+                {"dataset_key": "production_today", "source_alias": "production_data"},
+                {"dataset_key": "equipment_status", "source_alias": "equipment_data"},
+            ],
+            "step_plan": [
+                {
+                    "step_id": "rank_top_production_products",
+                    "operation": "rank_top_n",
+                    "source_alias": "production_data",
+                    "metric": "PRODUCTION",
+                    "group_by": product_grain,
+                    "top_n": 2,
+                    "output_columns": [*product_grain, "PRODUCTION"],
+                },
+                {
+                    "step_id": "summarize_equipment_count_for_top_products",
+                    "operation": "equipment_count_by_product",
+                    "source_alias": "equipment_data",
+                    "count_column": "EQPID",
+                    "filter_from_step": "rank_top_production_products",
+                    "join_keys": product_grain,
+                    "group_by": product_grain,
+                    "output_columns": [*product_grain, "EQP_COUNT"],
+                },
+                {
+                    "step_id": "join_production_and_equipment_count",
+                    "operation": "left_join",
+                    "left_step": "rank_top_production_products",
+                    "right_step": "summarize_equipment_count_for_top_products",
+                    "join_keys": product_grain,
+                    "output_columns": [*product_grain, "PRODUCTION", "EQP_COUNT"],
+                },
+            ],
+        },
+        "state": {},
+        "runtime_sources": {
+            "production_data": [
+                {"TECH": "A", "DEN": "1", "MODE": "M1", "PKG_TYPE1": "P", "PKG_TYPE2": "Q", "LEAD": "L", "MCP_NO": "A1", "PRODUCTION": 50},
+                {"TECH": "B", "DEN": "1", "MODE": "M2", "PKG_TYPE1": "P", "PKG_TYPE2": "Q", "LEAD": "L", "MCP_NO": "B1", "PRODUCTION": 90},
+                {"TECH": "C", "DEN": "1", "MODE": "M3", "PKG_TYPE1": "P", "PKG_TYPE2": "Q", "LEAD": "L", "MCP_NO": "C1", "PRODUCTION": 70},
+            ],
+            "equipment_data": [
+                {"TECH": "B", "DEN": "1", "MODE": "M2", "PKG_TYPE1": "P", "PKG_TYPE2": "Q", "LEAD": "L", "MCP_NO": "B1", "EQPID": "EQP-1"},
+                {"TECH": "B", "DEN": "1", "MODE": "M2", "PKG_TYPE1": "P", "PKG_TYPE2": "Q", "LEAD": "L", "MCP_NO": "B1", "EQPID": "EQP-2"},
+                {"TECH": "C", "DEN": "1", "MODE": "M3", "PKG_TYPE1": "P", "PKG_TYPE2": "Q", "LEAD": "L", "MCP_NO": "C1", "EQPID": "EQP-3"},
+            ],
+        },
+    }
+    pandas_llm_json = {
+        "code": "result_df = pd.DataFrame(columns=['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'PRODUCTION', 'EQP_COUNT'])",
+        "output_columns": [*product_grain, "PRODUCTION", "EQP_COUNT"],
+        "reasoning_steps": ["No data processing is performed because the instruction explicitly requests an empty result."],
+    }
+
+    result = pandas_executor.execute_pandas_from_llm(payload, json.dumps(pandas_llm_json, ensure_ascii=False))
+
+    assert result["analysis"]["status"] == "ok"
+    assert result["analysis"]["row_count"] == 2
+    assert result["analysis"]["columns"] == [*product_grain, "PRODUCTION", "EQP_COUNT"]
+    assert result["analysis"]["rows"][0]["MODE"] == "M2"
+    assert result["analysis"]["rows"][0]["PRODUCTION"] == 90
+    assert result["analysis"]["rows"][0]["EQP_COUNT"] == 2
+    assert result["analysis"]["rows"][1]["MODE"] == "M3"
+    assert result["analysis"]["rows"][1]["EQP_COUNT"] == 1
     assert "executor_fallback" in result["analysis"]["analysis_code"]
 
 

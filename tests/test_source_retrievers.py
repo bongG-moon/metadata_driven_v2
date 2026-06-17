@@ -83,6 +83,34 @@ def test_langflow_dummy_retriever_covers_all_current_datasets():
     assert next(item for item in results if item["dataset_key"] == "lot_status")["row_count"] > 100
 
 
+def test_langflow_dummy_retriever_applies_job_filters_with_standard_aliases():
+    module = _load_component("09_dummy_data_retriever.py")
+    payload = module.retrieve_dummy_data(
+        {
+            "intent_plan": {
+                "route": "single_retrieval",
+                "retrieval_jobs": [
+                    {
+                        "dataset_key": "lot_status",
+                        "source_alias": "lot_status_data",
+                        "params": {"DATE": "20260612"},
+                        "filters": [{"field": "OPER_NAME", "op": "in", "values": ["D/A1", "D/A2"]}],
+                        "required_columns": ["OPER_SHORT_DESC", "LOT_ID", "IN_TAT"],
+                    }
+                ],
+            },
+            "state": {},
+        }
+    )
+
+    source_result = payload["retrieval_payload"]["source_results"][0]
+    processes = {row["OPER_SHORT_DESC"] for row in source_result["data"]}
+
+    assert processes == {"D/A1", "D/A2"}
+    assert source_result["row_count"] > 0
+    assert source_result["applied_filters"][0]["field"] == "OPER_NAME"
+
+
 def test_langflow_source_retrievers_and_merger_preserve_source_types():
     plan = {
         "intent_plan": {

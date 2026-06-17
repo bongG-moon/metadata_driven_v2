@@ -198,7 +198,10 @@ die 수량, die가 몇 개인지, SUB PROD 수량은 lot_status 데이터의 SUB
 
 재공이 많은 세부공정 top N을 먼저 찾고, 그 공정들의 HOLD LOT 수와 평균 IN TAT를 같이 보여달라는 질문은 복합 순차 분석 recipe로 저장해줘.
 이 recipe의 key는 top_wip_process_hold_lot_in_tat이고 analysis_kind도 top_wip_process_hold_lot_in_tat이야.
+intent_type은 multi_step_analysis로 저장해줘.
 질문 cue는 재공, 공정, hold, in tat이고, "hold LOT 평균 in tat", "재공 많은 공정 hold lot" 같은 표현으로도 물어볼 수 있어.
+필수 질문 cue는 재공/WIP, 공정/세부공정, hold/홀드, in tat/IN_TAT가 모두 포함되어야 해.
+생산량 상위, 장비 대수, 설비 대수, 장비 수처럼 생산/장비 대수 질문이면 이 recipe를 적용하지 않도록 forbidden_question_cues로 저장해줘.
 필요한 dataset family는 wip과 lot이고, source alias는 wip은 wip_data, lot은 lot_status_data를 사용해.
 이 분석은 제품 grain이 아니라 recipe step 내부의 공정 grain을 사용하므로 grain_policy는 recipe_step_grain으로 저장해줘.
 WIP source의 필수 컬럼은 WORK_DT, OPER_NAME, WIP이고, lot source의 필수 컬럼은 OPER_SHORT_DESC, LOT_ID, LOT_HOLD_STAT_CD, IN_TAT야.
@@ -206,8 +209,26 @@ LLM이 lot_count_by_process, rank_top_n, aggregate_wip_total처럼 단순 분석
 이 recipe는 기존 retrieval_jobs와 step_plan을 교체하는 패턴이므로 replace_datasets, replace_retrieval_jobs, override_step_plan을 true로 저장해줘.
 HOLD 조건은 lot_status 조회 필터로 먼저 걸지 말고 HOLD_LOT_COUNT 계산 조건으로 사용해야 하므로 blocked_filter_fields에는 LOT_HOLD_STAT_CD와 LOT_STAT_CD를 넣어줘.
 top_n은 질문에 숫자가 있으면 그 숫자를 쓰고, 없으면 기본 3을 쓰도록 top_n_policy는 question_or_default, defaults.top_n은 3으로 저장해줘.
-step_plan_template는 1) wip_data를 OPER_NAME별로 WIP 합산 후 desc top_n 랭킹, 2) lot_status_data에서 해당 공정들의 HOLD_LOT_COUNT와 AVG_IN_TAT 계산, 3) OPER_SHORT_DESC 기준 left join 순서로 저장해줘.
+step_plan_template는 1) wip_data를 OPER_NAME별로 WIP 합산 후 desc top_n 랭킹하고 rename_columns로 OPER_NAME을 OPER_SHORT_DESC로 바꿈, 2) lot_status_data에서 해당 공정들의 HOLD_LOT_COUNT와 AVG_IN_TAT 계산, 3) OPER_SHORT_DESC 기준 left join 순서로 저장해줘.
 최종 output_columns는 OPER_SHORT_DESC, WIP, HOLD_LOT_COUNT, AVG_IN_TAT야.
+
+재공이 가장 많은 제품을 먼저 찾고, 그 제품 기준으로 LOT의 IN TAT가 가장 오래된 LOT을 찾아달라는 질문은 top_wip_product_oldest_lot recipe로 저장해줘.
+analysis_kind도 top_wip_product_oldest_lot이고, 필수 질문 cue는 재공/WIP, 제품/product, LOT, IN TAT/IN_TAT, 오래된/최장/oldest가 모두 포함되어야 해.
+필요한 dataset family는 wip과 lot이고, source alias는 wip은 wip_data, lot은 lot_data를 사용해.
+grain_policy는 question_or_product_grain이고, 제품 기준 컬럼은 TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO를 사용해.
+WIP source 필수 컬럼은 WORK_DT, TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, OPER_NAME, WIP이고, lot source 필수 컬럼은 TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, OPER_SHORT_DESC, LOT_ID, IN_TAT야.
+이 recipe는 기존 retrieval_jobs와 step_plan을 교체하므로 replace_datasets, replace_retrieval_jobs, override_step_plan을 true로 저장해줘.
+step_plan_template는 1) wip_data를 제품 기준으로 WIP 합산 후 desc top 1 제품 선정, 2) lot_data를 해당 제품키로 필터하고 IN_TAT desc top 1 LOT 선정, 3) 제품키 기준 left join 순서로 저장해줘.
+최종 output_columns는 TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, WIP, LOT_ID, IN_TAT야.
+
+생산량 상위 N개 제품과 각 제품별 할당 장비 대수를 같이 보여달라는 질문은 top_production_products_equipment_count recipe로 저장해줘.
+analysis_kind도 top_production_products_equipment_count이고, 필수 질문 cue는 생산량/생산/PRODUCTION, 제품/product, 장비/설비/equipment, 대수/수/count가 모두 포함되어야 해.
+필요한 dataset family는 production과 equipment이고, source alias는 production은 production_data, equipment는 equipment_data를 사용해.
+grain_policy는 question_or_product_grain이고, 제품 기준 컬럼은 TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO를 사용해.
+production source 필수 컬럼은 WORK_DT, TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, OPER_NAME, PRODUCTION이고, equipment source 필수 컬럼은 TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, EQPID야.
+top_n은 질문에 숫자가 있으면 그 숫자를 쓰고, 없으면 기본 5를 쓰도록 top_n_policy는 question_or_default, defaults.top_n은 5로 저장해줘.
+step_plan_template는 1) production_data를 제품 기준으로 PRODUCTION 합산 후 desc top_n 선정, 2) equipment_data를 해당 제품키로 필터하고 EQPID.nunique()로 EQP_COUNT 계산, 3) 제품키 기준 left join 순서로 저장해줘.
+최종 output_columns는 TECH, DEN, MODE, PKG_TYPE1, PKG_TYPE2, LEAD, MCP_NO, PRODUCTION, EQP_COUNT야.
 <!-- bulk_domain:end -->
 
 ## 단일 항목 예시

@@ -225,6 +225,9 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
 
 
 def _fallback_result_df(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame | None:
+    step_plan_result = _fallback_from_step_plan(plan, runtime_sources)
+    if step_plan_result is not None:
+        return step_plan_result
     if _is_top_wip_process_hold_lot_in_tat_plan(plan):
         return _fallback_top_wip_process_hold_lot_in_tat(plan, runtime_sources)
     if _is_top_wip_product_oldest_lot_plan(plan):
@@ -261,6 +264,219 @@ def _fallback_result_df(plan: dict[str, Any], runtime_sources: dict[str, Any]) -
     die_source = "SUB_PROD_QTY" if "SUB_PROD_QTY" in frame.columns else "DIE_QTY"
     die_qty = frame[die_source].sum() if die_source in frame.columns else 0
     return pd.DataFrame([{"LOT_COUNT": lot_count, "WF_QTY": wf_qty, "DIE_QTY": die_qty}])
+
+
+def _fallback_from_step_plan(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame | None:
+    steps = plan.get("step_plan") if isinstance(plan.get("step_plan"), list) else []
+    if not steps:
+        return None
+    frames_by_step: dict[str, pd.DataFrame] = {}
+    last_frame: pd.DataFrame | None = None
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            return None
+        operation = str(step.get("operation") or "").strip()
+        if operation == "rank_top_n":
+            frame = _fallback_step_rank_top_n(step, plan, runtime_sources, frames_by_step)
+        elif operation in {"equipment_count_by_product", "unique_count_by_group", "nunique_by_group"}:
+            frame = _fallback_step_unique_count(step, plan, runtime_sources, frames_by_step)
+        elif operation == "hold_lot_in_tat_by_process":
+            frame = _fallback_step_hold_lot_in_tat(step, plan, runtime_sources, frames_by_step)
+        elif operation == "left_join":
+            frame = _fallback_step_left_join(step, frames_by_step)
+        else:
+            return None
+        if frame is None:
+            return None
+        step_id = str(step.get("step_id") or f"step_{index + 1}")
+        frames_by_step[step_id] = frame
+        last_frame = frame
+    if last_frame is None:
+        return None
+    output_columns = _step_output_columns({"output_columns": plan.get("analysis_output_columns")}) or _step_output_columns(steps[-1])
+    return _select_step_columns(last_frame, output_columns)
+
+
+def _fallback_step_rank_top_n(
+    step: dict[str, Any],
+    plan: dict[str, Any],
+    runtime_sources: dict[str, Any],
+    frames_by_step: dict[str, pd.DataFrame],
+) -> pd.DataFrame | None:
+    frame = _frame_for_step_source(step, runtime_sources, plan)
+    if frame is None:
+        return None
+    frame = _filter_frame_from_previous_step(frame, step, frames_by_step)
+    metric = str(step.get("metric") or plan.get("metric") or "").strip()
+    if not metric or metric not in frame.columns:
+        return None
+    work = frame.copy()
+    work[metric] = pd.to_numeric(work[metric], errors="coerce").fillna(0)
+    group_by = _available_columns(work, step.get("group_by"))
+    if group_by:
+        result = work.groupby(group_by, dropna=False, as_index=False)[metric].sum()
+    else:
+        result = work
+    ascending = str(step.get("rank_order") or plan.get("rank_order") or "desc").lower() in {"asc", "ascending"}
+    top_n = _top_n_for_step(step, plan)
+    result = result.sort_values(metric, ascending=ascending).head(top_n)
+    result = _apply_step_renames(result, step)
+    return _select_step_columns(result, _step_output_columns(step))
+
+
+def _fallback_step_unique_count(
+    step: dict[str, Any],
+    plan: dict[str, Any],
+    runtime_sources: dict[str, Any],
+    frames_by_step: dict[str, pd.DataFrame],
+) -> pd.DataFrame | None:
+    frame = _frame_for_step_source(step, runtime_sources, plan)
+    if frame is None:
+        return None
+    frame = _filter_frame_from_previous_step(frame, step, frames_by_step)
+    count_column = str(step.get("count_column") or "").strip()
+    if not count_column or count_column not in frame.columns:
+        return None
+    group_by = _available_columns(frame, step.get("group_by"))
+    output_column = _count_output_column(step, group_by)
+    if group_by:
+        result = frame.groupby(group_by, dropna=False)[count_column].nunique().reset_index(name=output_column)
+    else:
+        result = pd.DataFrame([{output_column: frame[count_column].nunique()}])
+    return _select_step_columns(result, _step_output_columns(step))
+
+
+def _fallback_step_hold_lot_in_tat(
+    step: dict[str, Any],
+    plan: dict[str, Any],
+    runtime_sources: dict[str, Any],
+    frames_by_step: dict[str, pd.DataFrame],
+) -> pd.DataFrame | None:
+    frame = _frame_for_step_source(step, runtime_sources, plan)
+    if frame is None:
+        return None
+    frame = _filter_frame_from_previous_step(frame, step, frames_by_step)
+    group_by = _available_columns(frame, step.get("group_by"))
+    if not group_by:
+        return None
+    count_column = str(step.get("count_column") or "LOT_ID").strip()
+    tat_column = str(step.get("tat_column") or "IN_TAT").strip()
+    status_column = str(step.get("hold_status_column") or "LOT_HOLD_STAT_CD").strip()
+    if count_column not in frame.columns or tat_column not in frame.columns:
+        return None
+    work = frame.copy()
+    work[tat_column] = pd.to_numeric(work[tat_column], errors="coerce")
+    base = work[group_by].drop_duplicates()
+    if status_column in work.columns:
+        status = work[status_column].astype(str).str.upper().str.replace(" ", "", regex=False)
+        hold_mask = status.isin({"HOLD", "ONHOLD", "Y", "YES", "TRUE"})
+    else:
+        hold_mask = pd.Series(False, index=work.index)
+    hold_counts = work[hold_mask].groupby(group_by, dropna=False)[count_column].nunique().reset_index(name="HOLD_LOT_COUNT")
+    avg_in_tat = work.groupby(group_by, dropna=False)[tat_column].mean().reset_index(name="AVG_IN_TAT")
+    result = base.merge(hold_counts, on=group_by, how="left").merge(avg_in_tat, on=group_by, how="left")
+    result["HOLD_LOT_COUNT"] = result["HOLD_LOT_COUNT"].fillna(0).astype(int)
+    return _select_step_columns(result, _step_output_columns(step))
+
+
+def _fallback_step_left_join(step: dict[str, Any], frames_by_step: dict[str, pd.DataFrame]) -> pd.DataFrame | None:
+    left_step = str(step.get("left_step") or "").strip()
+    right_step = str(step.get("right_step") or "").strip()
+    if not left_step or not right_step or left_step not in frames_by_step or right_step not in frames_by_step:
+        return None
+    left = frames_by_step[left_step]
+    right = frames_by_step[right_step]
+    join_keys = _step_join_keys(step, left, right)
+    if not join_keys:
+        return None
+    result = left.merge(right, on=join_keys, how="left")
+    for column in _step_output_columns(step):
+        if column not in result.columns:
+            result[column] = 0 if column.endswith("_COUNT") else None
+    return _select_step_columns(result, _step_output_columns(step))
+
+
+def _frame_for_step_source(step: dict[str, Any], runtime_sources: dict[str, Any], plan: dict[str, Any]) -> pd.DataFrame | None:
+    alias = str(step.get("source_alias") or "").strip()
+    if alias and alias in runtime_sources:
+        rows = runtime_sources.get(alias)
+        return _source_dataframe(rows if isinstance(rows, list) else [], [], str(plan.get("analysis_kind") or ""))
+    return None
+
+
+def _filter_frame_from_previous_step(
+    frame: pd.DataFrame,
+    step: dict[str, Any],
+    frames_by_step: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    previous_step_id = str(step.get("filter_from_step") or "").strip()
+    if not previous_step_id or previous_step_id not in frames_by_step:
+        if not frames_by_step:
+            return frame
+        previous = next(reversed(frames_by_step.values()))
+    else:
+        previous = frames_by_step[previous_step_id]
+    join_keys = _step_join_keys(step, frame, previous)
+    if not join_keys:
+        default_keys = ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "TSV_DIE_TYP"]
+        join_keys = [column for column in default_keys if column in frame.columns and column in previous.columns]
+    if not join_keys:
+        return frame
+    right_columns = join_keys + [column for column in previous.columns if column not in frame.columns]
+    selected = previous[right_columns].drop_duplicates()
+    return frame.merge(selected, on=join_keys, how="inner")
+
+
+def _step_join_keys(step: dict[str, Any], left: pd.DataFrame, right: pd.DataFrame) -> list[str]:
+    raw_keys = step.get("join_keys") if isinstance(step.get("join_keys"), list) else []
+    if not raw_keys and step.get("join_key"):
+        raw_keys = [step.get("join_key")]
+    return [str(key) for key in raw_keys if str(key) in left.columns and str(key) in right.columns]
+
+
+def _available_columns(frame: pd.DataFrame, columns: Any) -> list[str]:
+    return [str(column) for column in columns if str(column) in frame.columns] if isinstance(columns, list) else []
+
+
+def _top_n_for_step(step: dict[str, Any], plan: dict[str, Any]) -> int:
+    value = step.get("top_n", plan.get("top_n", 1))
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str) and value.isdigit() and int(value) > 0:
+        return int(value)
+    return 1
+
+
+def _apply_step_renames(frame: pd.DataFrame, step: dict[str, Any]) -> pd.DataFrame:
+    renames = step.get("rename_columns") if isinstance(step.get("rename_columns"), dict) else {}
+    if not renames:
+        return frame
+    return frame.rename(columns={str(source): str(target) for source, target in renames.items()})
+
+
+def _step_output_columns(step: dict[str, Any]) -> list[str]:
+    columns = step.get("output_columns") if isinstance(step.get("output_columns"), list) else []
+    return [str(column) for column in columns if str(column or "").strip()]
+
+
+def _select_step_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    if not columns:
+        return frame
+    result = frame.copy()
+    for column in columns:
+        if column not in result.columns:
+            result[column] = 0 if column.endswith("_COUNT") else None
+    return result[columns]
+
+
+def _count_output_column(step: dict[str, Any], group_by: list[str]) -> str:
+    explicit = str(step.get("output_column") or "").strip()
+    if explicit:
+        return explicit
+    for column in _step_output_columns(step):
+        if column not in group_by:
+            return column
+    return "COUNT"
 
 
 def _should_replace_empty_generated_result(result_df: pd.DataFrame, fallback_df: pd.DataFrame | None) -> bool:
@@ -494,6 +710,8 @@ def _rank_group_from_oper_name(value: Any) -> str:
 
 def _order_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.DataFrame:
     preferred = _preferred_columns(plan)
+    if not preferred and isinstance(plan.get("analysis_output_columns"), list):
+        preferred = [str(column) for column in plan["analysis_output_columns"] if str(column or "").strip()]
     if not preferred:
         return frame
     ordered = [column for column in preferred if column in frame.columns]

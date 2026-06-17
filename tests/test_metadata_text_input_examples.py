@@ -320,7 +320,7 @@ def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeyp
 
     assert written["raw_text"] == DOMAIN_BULK_TEXT
     assert written["write_result"]["status"] == "ok"
-    assert written["write_result"]["saved_count"] == 36
+    assert written["write_result"]["saved_count"] == 38
     docs = store[("metadata_driven_agent_v2", "agent_v2_domain_items")]
     assert set(docs) >= {
         "domain:process_groups:DA",
@@ -334,6 +334,8 @@ def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeyp
         "domain:analysis_recipes:production_wip_target_rate",
         "domain:analysis_recipes:lot_quantity_summary",
         "domain:analysis_recipes:top_wip_process_hold_lot_in_tat",
+        "domain:analysis_recipes:top_wip_product_oldest_lot",
+        "domain:analysis_recipes:top_production_products_equipment_count",
     }
     assert docs["domain:product_terms:hbm"]["payload"]["condition_by_family"]["equipment"] == {"PKG_TYPE1": "HBM"}
     assert docs["domain:quantity_terms:lot_count"]["payload"]["aggregation"] == "nunique"
@@ -342,6 +344,7 @@ def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeyp
     assert docs["domain:quantity_terms:equipment_count"]["payload"]["aggregation"] == "nunique"
     assert docs["domain:quantity_terms:equipment_count"]["payload"]["output_column"] == "EQP_COUNT"
     assert docs["domain:metric_terms:achievement_rate"]["payload"]["required_quantity_terms"] == ["production", "target"]
+    assert docs["domain:analysis_recipes:production_wip_target_rate"]["payload"]["intent_type"] == "multi_source_analysis"
     assert docs["domain:analysis_recipes:production_wip_target_rate"]["payload"]["grain_policy"] == "question_or_product_grain"
     assert docs["domain:analysis_recipes:production_wip_target_rate"]["payload"]["source_aliases_by_family"] == {
         "production": "production_data",
@@ -354,11 +357,17 @@ def test_worker_bulk_domain_text_input_saves_all_current_domain_metadata(monkeyp
         "DIE_QTY",
     ]
     top_wip_recipe = docs["domain:analysis_recipes:top_wip_process_hold_lot_in_tat"]["payload"]
+    assert top_wip_recipe["intent_type"] == "multi_step_analysis"
     assert top_wip_recipe["grain_policy"] == "recipe_step_grain"
     assert top_wip_recipe["replace_retrieval_jobs"] is True
+    assert top_wip_recipe["required_question_cues"][0] == ["재공", "WIP", "wip"]
+    assert "장비 대수" in top_wip_recipe["forbidden_question_cues"]
     assert top_wip_recipe["blocked_filter_fields"] == ["LOT_HOLD_STAT_CD", "LOT_STAT_CD"]
     assert top_wip_recipe["step_plan_template"][0]["operation"] == "rank_top_n"
+    assert top_wip_recipe["step_plan_template"][0]["rename_columns"] == {"OPER_NAME": "OPER_SHORT_DESC"}
     assert top_wip_recipe["output_columns"] == ["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]
+    assert docs["domain:analysis_recipes:top_wip_product_oldest_lot"]["payload"]["step_plan_template"][1]["metric"] == "IN_TAT"
+    assert docs["domain:analysis_recipes:top_production_products_equipment_count"]["payload"]["step_plan_template"][1]["count_column"] == "EQPID"
     assert docs["domain:analysis_recipes:equipment_for_previous_products"]["payload"]["result_mode"] == "detail_rows"
     assert docs["domain:analysis_recipes:equipment_count_for_previous_products"]["payload"]["output_columns"] == ["EQP_COUNT"]
     assert docs["domain:status_terms:hold_lot"]["payload"]["result_mode"] == "detail_rows"

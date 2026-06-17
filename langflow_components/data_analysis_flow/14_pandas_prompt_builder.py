@@ -47,6 +47,8 @@ def build_pandas_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "- Read plan['step_plan'] and implement every step in order; do not collapse a multi-step plan into only the easiest count or groupby.",
             "- Preserve intermediate DataFrames for ranked/filtering steps, then use them in later filtering, aggregation, and join steps.",
             "- If a step ranks top_n rows, perform that ranking before downstream metrics that depend on the ranked scope.",
+            "- Treat step_plan operations as reusable primitives: rank_top_n groups/sorts by step fields; equipment_count_by_product counts step.count_column.nunique by group_by; hold_lot_in_tat_by_process calculates metrics from step fields; left_join joins named previous steps by join_key/join_keys.",
+            "- Apply step.rename_columns when present before a later step references those renamed columns.",
             "- If the question or plan asks for multiple metrics, compute all of them and include every plan['analysis_output_columns'] column in result_df when source data exists.",
             "- If generated output is missing required plan columns, the executor may replace it with a deterministic fallback.",
             "",

@@ -99,6 +99,7 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
             notes.append("step_plan이 없어 조회 alias를 기준으로 기본 분석 단계를 보완했습니다.")
     _normalize_step_plan_columns(plan, normalized_jobs, catalog)
     _augment_step_plan_defaults(plan, normalized_jobs, metadata, payload)
+    _normalize_intent_type_for_analysis(plan, normalized_jobs)
     _mark_previous_result_restore_need(plan, payload, question, notes)
     normalized_jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else normalized_jobs
     plan["datasets"] = _unique([job["dataset_key"] for job in normalized_jobs if isinstance(job, dict) and job.get("dataset_key")] or plan.get("datasets", []))
@@ -262,6 +263,9 @@ def _matching_analysis_recipe(question: str, metadata: dict[str, Any], plan: dic
         forbidden = recipe.get("forbidden_question_cues") if isinstance(recipe.get("forbidden_question_cues"), list) else []
         if forbidden and _mentions_any(question, forbidden):
             continue
+        required = recipe.get("required_question_cues") if isinstance(recipe.get("required_question_cues"), list) else []
+        if required and not _required_question_cues_match(question, required):
+            continue
         score = _recipe_match_score(str(recipe_key), recipe, question, metadata, plan)
         if score > best_score:
             best_key = str(recipe_key)
@@ -300,6 +304,28 @@ def _recipe_match_score(
     return score
 
 
+def _required_question_cues_match(question: str, required_cues: list[Any]) -> bool:
+    for cue in required_cues:
+        if isinstance(cue, list):
+            if not _mentions_any(question, cue):
+                return False
+            continue
+        if isinstance(cue, dict):
+            aliases = cue.get("any")
+            if isinstance(aliases, list) and aliases:
+                if not _mentions_any(question, aliases):
+                    return False
+                continue
+            aliases = cue.get("all")
+            if isinstance(aliases, list) and aliases:
+                if not all(_alias_in_text(question, alias) for alias in aliases):
+                    return False
+                continue
+        if not _alias_in_text(question, cue):
+            return False
+    return True
+
+
 def _apply_analysis_recipe(
     plan: dict[str, Any],
     recipe_key: str,
@@ -323,7 +349,7 @@ def _apply_analysis_recipe(
     if not detail_requested and default_kind and (not plan.get("datasets") or not plan.get("retrieval_jobs")):
         plan["analysis_kind"] = default_kind
     intent_type = str(recipe.get("intent_type") or "").strip()
-    if not detail_requested and intent_type and (not plan.get("retrieval_jobs") or str(plan.get("intent_type") or "") == "single_retrieval_analysis"):
+    if not detail_requested and intent_type and str(plan.get("intent_type") or "") not in {"finish", "followup_transform"}:
         plan["intent_type"] = intent_type
     plan["matched_analysis_recipe"] = recipe_key
     plan["recipe_grain_policy"] = recipe.get("grain_policy", "")
@@ -1843,6 +1869,19 @@ def _date_param(dataset_key: str, request_date: str, catalog: dict[str, Any] | N
 def _append_once(values: list[str], message: str) -> None:
     if message not in values:
         values.append(message)
+
+
+def _normalize_intent_type_for_analysis(plan: dict[str, Any], normalized_jobs: list[dict[str, Any]]) -> None:
+    current = str(plan.get("intent_type") or "").strip()
+    if current in {"finish", "followup_transform", "detail_lookup"}:
+        return
+    analysis_kind = str(plan.get("analysis_kind") or "").strip()
+    job_count = len([job for job in normalized_jobs if isinstance(job, dict)])
+    if analysis_kind == "aggregate_join" and job_count > 1:
+        plan["intent_type"] = "multi_source_analysis"
+        return
+    if analysis_kind in {"rank_top_n", "aggregate_wip_total", "lot_count_by_process", "lot_quantity_summary", "equipment_by_model"} and job_count <= 1:
+        plan["intent_type"] = "single_retrieval_analysis"
 
 
 def _route_for_intent(intent_type: Any, job_count: int) -> str:
