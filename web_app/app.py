@@ -1,15 +1,27 @@
 from __future__ import annotations
 
 import html
+import sys
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from .langflow_client import LangflowApiClient, LangflowSettings
-from .mock_api import MockApiClient
-from .ui_helpers import chat_dataframe_height, compact_json_html, display_table_frame, json_text, safe_markdown_text
+APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parent
+
+try:
+    from .langflow_client import LangflowApiClient, LangflowSettings
+    from .mock_api import MockApiClient
+    from .ui_helpers import chat_dataframe_height, compact_json_html, display_table_frame, json_text, safe_markdown_text
+except ImportError:
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from web_app.langflow_client import LangflowApiClient, LangflowSettings
+    from web_app.mock_api import MockApiClient
+    from web_app.ui_helpers import chat_dataframe_height, compact_json_html, display_table_frame, json_text, safe_markdown_text
 
 
 APP_TITLE = "Metadata Agent Console"
@@ -23,6 +35,16 @@ AUTHORING_TYPES = {
     "domain": "Domain",
     "table_catalog": "Table catalog",
     "main_flow_filter": "Main flow filter",
+}
+AUTHORING_DESCRIPTIONS = {
+    "domain": "업무 용어, 공정 그룹, 제품 조건, metric, join rule을 domain metadata로 변환하고 검토한 뒤 저장합니다.",
+    "table_catalog": "dataset, source, query_template, 컬럼, filter mapping 정보를 table catalog metadata로 등록합니다.",
+    "main_flow_filter": "날짜, 공정, MODE, 제품 속성처럼 여러 dataset에서 공통으로 쓰는 표준 의미 필터를 등록합니다.",
+}
+AUTHORING_EXAMPLE_PATHS = {
+    "domain": REPO_ROOT / "langflow_components" / "domain_authoring_flow" / "raw_text_input_example.md",
+    "table_catalog": REPO_ROOT / "langflow_components" / "table_catalog_authoring_flow" / "raw_text_input_example.md",
+    "main_flow_filter": REPO_ROOT / "langflow_components" / "main_flow_filters_authoring_flow" / "raw_text_input_example.md",
 }
 ACTION_LABELS = {
     "ask": "먼저 확인",
@@ -67,13 +89,157 @@ def ensure_state() -> None:
     if "langflow_api" not in st.session_state:
         st.session_state.langflow_api = LangflowApiClient()
     if "session_id" not in st.session_state:
-        st.session_state.session_id = f"web-{uuid.uuid4().hex[:8]}"
+        st.session_state.session_id = new_session_id()
+    if "session_id_input" not in st.session_state:
+        st.session_state.session_id_input = st.session_state.session_id
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
     if "latest_state" not in st.session_state:
         st.session_state.latest_state = {}
     if "authoring_results" not in st.session_state:
         st.session_state.authoring_results = []
+
+
+def new_session_id() -> str:
+    return f"web-{uuid.uuid4().hex[:8]}"
+
+
+def reset_conversation(session_id: str | None = None, keep_session: bool = False) -> None:
+    if not keep_session:
+        st.session_state.session_id = str(session_id or new_session_id()).strip() or new_session_id()
+        st.session_state.session_id_input = st.session_state.session_id
+    st.session_state.chat_messages = []
+    st.session_state.latest_state = {}
+    st.session_state.pop("pending_question", None)
+
+
+def authoring_example_text(flow_key: str) -> str:
+    path = AUTHORING_EXAMPLE_PATHS.get(flow_key)
+    if path and path.exists():
+        return path.read_text(encoding="utf-8").strip()
+    return AUTHORING_EXAMPLES.get(flow_key, "")
+
+
+def authoring_input_payload(raw_text: str, review_notes: str) -> str:
+    raw = str(raw_text or "").strip()
+    notes = str(review_notes or "").strip()
+    if not notes:
+        return raw
+    return f"{raw}\n\n[추가 검수 지시]\n{notes}"
+
+
+def latest_chat_applied_scope() -> dict[str, Any]:
+    messages = st.session_state.get("chat_messages")
+    if not isinstance(messages, list):
+        return {}
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        result = message.get("result") if isinstance(message.get("result"), dict) else {}
+        scope = result.get("applied_scope") if isinstance(result.get("applied_scope"), dict) else {}
+        if scope:
+            return scope
+    return {}
+
+
+def state_summary_for_sidebar(state: dict[str, Any] | None = None, applied_scope: dict[str, Any] | None = None) -> dict[str, Any]:
+    state = state if isinstance(state, dict) else st.session_state.get("latest_state", {})
+    applied_scope = applied_scope if isinstance(applied_scope, dict) else latest_chat_applied_scope()
+    current_data = state.get("current_data") if isinstance(state.get("current_data"), dict) else {}
+    datasets = current_data.get("source_dataset_keys") or applied_scope.get("datasets") or []
+    if not isinstance(datasets, list):
+        datasets = [datasets]
+    source_aliases = current_data.get("source_aliases") or applied_scope.get("source_aliases") or []
+    if not isinstance(source_aliases, list):
+        source_aliases = [source_aliases]
+    columns = current_data.get("columns") if isinstance(current_data.get("columns"), list) else []
+    row_count = current_data.get("row_count")
+    preview_rows = current_data.get("preview_rows") or current_data.get("rows") or []
+    if not isinstance(preview_rows, list):
+        preview_rows = []
+    product_summary = current_data.get("product_key_summary") if isinstance(current_data.get("product_key_summary"), dict) else {}
+    row_count_value = int_or_zero(row_count) or len(preview_rows)
+    return {
+        "datasets": [str(item) for item in datasets if str(item or "").strip()],
+        "source_aliases": [str(item) for item in source_aliases if str(item or "").strip()],
+        "row_count": row_count_value,
+        "preview_count": len(preview_rows),
+        "columns": [str(column) for column in columns[:8]],
+        "product_key_count": int_or_zero(product_summary.get("count") or product_summary.get("product_count")),
+        "has_state": bool(current_data or applied_scope),
+    }
+
+
+def active_scope_sidebar_html(state: dict[str, Any] | None = None, applied_scope: dict[str, Any] | None = None) -> str:
+    summary = state_summary_for_sidebar(state, applied_scope)
+    state_label = "활성" if summary["has_state"] else "대기"
+    panel_class = "active-scope-panel" if summary["has_state"] else "active-scope-panel empty"
+    if summary["has_state"]:
+        dataset_text = ", ".join(summary["datasets"][:3]) or "dataset 정보 없음"
+        if len(summary["datasets"]) > 3:
+            dataset_text += f" 외 {len(summary['datasets']) - 3}개"
+        alias_text = ", ".join(summary["source_aliases"][:3])
+        columns_text = ", ".join(summary["columns"][:6])
+        body_html = (
+            f'<div class="active-scope-datasets">{html.escape(dataset_text)}</div>'
+            '<div class="active-scope-chip-list">'
+            f'<div class="active-scope-chip"><div class="active-scope-chip-label">Rows</div><div class="active-scope-chip-value">{summary["row_count"]:,}</div></div>'
+            f'<div class="active-scope-chip"><div class="active-scope-chip-label">Preview</div><div class="active-scope-chip-value">{summary["preview_count"]:,}</div></div>'
+            f'<div class="active-scope-chip"><div class="active-scope-chip-label">Product keys</div><div class="active-scope-chip-value">{summary["product_key_count"]:,}</div></div>'
+            "</div>"
+        )
+        if alias_text:
+            body_html += f'<div class="active-scope-footer">Aliases: {html.escape(alias_text)}</div>'
+        if columns_text:
+            body_html += f'<div class="active-scope-footer">Columns: {html.escape(columns_text)}</div>'
+    else:
+        body_html = '<div class="active-scope-empty-text">질의가 실행되면 후속 질문에서 이어 쓸 데이터셋, row 수, preview 정보가 여기에 표시됩니다.</div>'
+    return (
+        f'<div class="{panel_class}">'
+        '<div class="active-scope-header">'
+        '<div><div class="active-scope-kicker">Session state</div><div class="active-scope-title">후속 질문 기준</div></div>'
+        f'<span class="active-scope-state">{html.escape(state_label)}</span>'
+        "</div>"
+        f"{body_html}"
+        "</div>"
+    )
+
+
+def render_sidebar_active_scope(slot: Any | None = None, state: dict[str, Any] | None = None, applied_scope: dict[str, Any] | None = None) -> None:
+    target = slot if slot is not None else st.sidebar
+    target.markdown(active_scope_sidebar_html(state, applied_scope), unsafe_allow_html=True)
+
+
+def render_session_controls(api_settings: LangflowSettings) -> None:
+    configured = api_settings.configured_summary()
+    st.sidebar.markdown('<div class="sidebar-section-label">Session</div>', unsafe_allow_html=True)
+    st.sidebar.text_input("Session ID", key="session_id_input", help="기존 MongoDB session state를 이어 보려면 같은 Session ID를 입력한 뒤 적용하세요.")
+    apply_col, new_col = st.sidebar.columns(2)
+    if apply_col.button("세션 적용", width="stretch"):
+        reset_conversation(str(st.session_state.session_id_input or st.session_state.session_id), keep_session=False)
+        st.rerun()
+    if new_col.button("새 세션", width="stretch"):
+        reset_conversation()
+        st.rerun()
+    if st.sidebar.button("현재 화면 state 초기화", width="stretch"):
+        reset_conversation(keep_session=True)
+        st.rerun()
+    store_label = api_settings.session_state_collection if configured.get("session_state") else "disabled"
+    st.sidebar.markdown(
+        f"""
+        <div class="config-list session-store-list">
+          <div class="config-row">
+            <div><div class="config-label">Session State Store</div><div class="config-env">WEB_SESSION_STORE / MONGODB_SESSION_STATE_COLLECTION</div></div>
+            <span class="config-badge {'ok' if configured.get('session_state') else 'warn'}">{'MongoDB' if configured.get('session_state') else 'Off'}</span>
+          </div>
+          <div class="config-row">
+            <div><div class="config-label">Collection</div><div class="config-env">{html.escape(str(store_label))}</div></div>
+            <span class="config-value">state</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_sidebar() -> dict[str, Any]:
@@ -130,13 +296,11 @@ def render_sidebar() -> dict[str, Any]:
     )
     if runtime_mode == "Langflow API" and not api_ready:
         st.sidebar.warning("Query Langflow API URL 또는 flow id가 없어 질의를 실행할 수 없습니다. env 설정 전에는 Python mock을 사용하세요.")
+    render_session_controls(api_settings)
+    active_scope_slot = st.sidebar.empty()
+    render_sidebar_active_scope(active_scope_slot)
     developer_mode = st.sidebar.toggle("개발자 정보 보기", value=True)
     number_mode = st.sidebar.selectbox("숫자 표시", ["comma", "k"], format_func=lambda item: "1,000" if item == "comma" else "1.0K")
-    if st.sidebar.button("세션 초기화", width="stretch"):
-        st.session_state.session_id = f"web-{uuid.uuid4().hex[:8]}"
-        st.session_state.chat_messages = []
-        st.session_state.latest_state = {}
-        st.rerun()
     return {
         "page": page,
         "developer_mode": developer_mode,
@@ -144,6 +308,7 @@ def render_sidebar() -> dict[str, Any]:
         "runtime_mode": runtime_mode,
         "api_ready": api_ready,
         "api_settings": api_settings,
+        "active_scope_slot": active_scope_slot,
     }
 
 
@@ -180,6 +345,7 @@ def render_query_page(settings: dict[str, Any]) -> None:
         with st.spinner("Langflow API 실행 중..." if settings.get("runtime_mode") == "Langflow API" else "Python mock API 실행 중..."):
             result = run_query_backend(user_message, settings)
             st.session_state.latest_state = result.get("state", {})
+            render_sidebar_active_scope(settings.get("active_scope_slot"), st.session_state.latest_state, result.get("applied_scope"))
         render_query_result(result, settings, "latest")
     st.session_state.chat_messages.append({"role": "assistant", "content": result.get("answer_message", ""), "result": result})
 
@@ -317,17 +483,42 @@ def render_raw_result(result: dict[str, Any], settings: dict[str, Any]) -> None:
 def render_authoring_page(settings: dict[str, Any]) -> None:
     render_topbar("Metadata 등록", st.session_state.session_id)
     flow_key = st.segmented_control("등록 유형", list(AUTHORING_TYPES), format_func=lambda key: AUTHORING_TYPES[key], default="domain")
+    st.markdown(f"#### {AUTHORING_TYPES[flow_key]} 등록")
+    st.caption(AUTHORING_DESCRIPTIONS.get(flow_key, ""))
+    with st.expander("입력 예시 보기", expanded=False):
+        st.code(authoring_example_text(flow_key), language="text")
+        if st.button("예시 입력하기", key=f"load_authoring_example_{flow_key}"):
+            st.session_state[f"authoring_text_{flow_key}"] = authoring_example_text(flow_key)
+            st.rerun()
     action = st.selectbox("저장 방식", list(ACTION_LABELS), format_func=lambda key: ACTION_LABELS[key], index=0)
-    text = st.text_area("자연어 설명", value=AUTHORING_EXAMPLES[flow_key], height=180)
+    st.session_state.setdefault(f"authoring_text_{flow_key}", "")
+    text = st.text_area(
+        "자연어 설명",
+        key=f"authoring_text_{flow_key}",
+        height=300,
+        placeholder=f"예시)\n{authoring_example_text(flow_key)}",
+    )
+    review_notes = st.text_area(
+        "추가 검수 지시",
+        key=f"authoring_review_notes_{flow_key}",
+        height=88,
+        placeholder="예: 기존 항목과 충돌하면 merge 대신 보완 요청으로 돌려줘.",
+    )
     run_col, clear_col = st.columns([1, 4])
     run_clicked = run_col.button("Langflow 실행" if settings.get("runtime_mode") == "Langflow API" else "Mock 실행", type="primary", width="stretch")
     if clear_col.button("결과 지우기", width="stretch"):
         st.session_state.authoring_results = []
         st.rerun()
     if run_clicked:
-        with st.spinner("Langflow authoring API 실행 중..." if settings.get("runtime_mode") == "Langflow API" else "Python mock authoring 실행 중..."):
-            result = run_authoring_backend(flow_key, text, action, settings)
-        st.session_state.authoring_results.insert(0, result)
+        if not str(text or "").strip():
+            render_inline_status("입력", "등록할 자연어 설명을 입력해 주세요.", "warning")
+        else:
+            payload_text = authoring_input_payload(text, review_notes)
+            with st.spinner("Langflow authoring API 실행 중..." if settings.get("runtime_mode") == "Langflow API" else "Python mock authoring 실행 중..."):
+                result = run_authoring_backend(flow_key, payload_text, action, settings)
+            result["flow_type"] = result.get("flow_type") or flow_key
+            st.session_state[f"authoring_result_{flow_key}"] = result
+            st.session_state.authoring_results.insert(0, result)
     if not st.session_state.authoring_results:
         render_inline_status("대기", "실행하면 정제 텍스트, 생성 item, 검토, 저장 결과가 표시됩니다.")
         return
@@ -359,28 +550,196 @@ def run_authoring_backend(flow_key: str, text: str, action: str, settings: dict[
         }
 
 
+def authoring_status_label(status: Any) -> str:
+    labels = {
+        "saved": "저장 완료",
+        "ok": "완료",
+        "processed": "처리 완료",
+        "needs_more_input": "추가 정보 필요",
+        "duplicate_choice_required": "중복 처리 선택 필요",
+        "warning": "확인 필요",
+        "skipped": "저장 안 함",
+        "error": "오류",
+        "success": "완료",
+        "ready_to_save": "저장 가능",
+        "needs_supplement": "보완 필요",
+    }
+    return labels.get(str(status or "").strip(), str(status or "상태 없음"))
+
+
+def authoring_status_tone(status: Any) -> str:
+    text = str(status or "").strip()
+    if text in {"saved", "ok", "success", "ready_to_save", "processed"}:
+        return "success"
+    if text in {"error", "failed"}:
+        return "error"
+    return "warning"
+
+
+def int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def authoring_saved(result: dict[str, Any]) -> bool:
+    write_result = result.get("write_result") if isinstance(result.get("write_result"), dict) else {}
+    return bool(
+        result.get("ui_status") == "saved"
+        or write_result.get("success")
+        or write_result.get("saved")
+        or int_or_zero(write_result.get("saved_count")) > 0
+    )
+
+
+def authoring_ready_to_save(result: dict[str, Any]) -> bool:
+    review = result.get("review") if isinstance(result.get("review"), dict) else {}
+    if "ready_to_save" in review:
+        return bool(review.get("ready_to_save"))
+    return str(result.get("ui_status") or result.get("status") or "").strip() in {"saved", "ok", "ready_to_save"}
+
+
+def authoring_needs_supplement(result: dict[str, Any]) -> bool:
+    review = result.get("review") if isinstance(result.get("review"), dict) else {}
+    return bool(review.get("needs_supplement") or review.get("supplement_requests") or result.get("ui_status") == "needs_more_input")
+
+
+def authoring_item_summary_frame(items: list[dict[str, Any]]) -> pd.DataFrame:
+    rows = []
+    for item in items:
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        rows.append(
+            {
+                "유형": item.get("section") or item.get("metadata_type") or item.get("type") or "",
+                "키": item.get("key") or item.get("dataset_key") or item.get("filter_key") or "",
+                "상태": item.get("status", ""),
+                "표시명": payload.get("display_name") or item.get("display_name") or "",
+                "source": (payload.get("source_config") or {}).get("source_type") if isinstance(payload.get("source_config"), dict) else payload.get("source_type", ""),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def authoring_trace_stages(result: dict[str, Any]) -> list[dict[str, Any]]:
+    trace = result.get("trace")
+    if isinstance(trace, list):
+        return [dict(stage) for stage in trace if isinstance(stage, dict)]
+    trace_dict = trace if isinstance(trace, dict) else {}
+    stages = [dict(stage) for stage in trace_dict.get("stages", []) if isinstance(stage, dict)]
+    if stages:
+        return stages
+    raw_text = trace_dict.get("raw_text") or result.get("raw_text")
+    refined_text = trace_dict.get("refined_text") or result.get("refined_text")
+    duplicate_decision = trace_dict.get("duplicate_decision") if isinstance(trace_dict.get("duplicate_decision"), dict) else {}
+    review = result.get("review") if isinstance(result.get("review"), dict) else {}
+    write_result = result.get("write_result") if isinstance(result.get("write_result"), dict) else {}
+    items = result.get("items") if isinstance(result.get("items"), list) else []
+    built: list[dict[str, Any]] = []
+    if raw_text:
+        built.append({"stage": "input", "label": "사용자 입력", "status": "success", "raw_text": raw_text})
+    if refined_text:
+        built.append({"stage": "refinement", "label": "텍스트 정제", "status": "success", "refined_text": refined_text})
+    if items:
+        built.append({"stage": "normalization", "label": "Metadata item 생성", "status": "success", "items": items})
+    if duplicate_decision:
+        status = "warning" if duplicate_decision.get("requires_user_choice") else "success"
+        built.append({"stage": "duplicate", "label": "중복 처리 판단", "status": status, "duplicate_decision": duplicate_decision})
+    if review:
+        status = "success" if review.get("ready_to_save") else "warning"
+        built.append(
+            {
+                "stage": "review",
+                "label": "검토",
+                "status": status,
+                "supplement_requests": review.get("supplement_requests"),
+                "item_reviews": review.get("item_reviews"),
+                "review": review,
+            }
+        )
+    if write_result:
+        status = "success" if authoring_saved(result) else str(write_result.get("status") or "warning")
+        built.append({"stage": "write", "label": "저장", "status": status, "write_result": write_result})
+    return built
+
+
+def render_authoring_stage(stage: dict[str, Any], index: int, key_prefix: str) -> None:
+    label = str(stage.get("label") or stage.get("stage") or f"Step {index}").strip()
+    status = str(stage.get("status") or "").strip()
+    expanded = status in {"warning", "error"} or stage.get("stage") in {"refinement", "review", "write"}
+    with st.expander(f"{index}. {label} · {authoring_status_label(status)}", expanded=expanded):
+        summary = str(stage.get("summary") or "").strip()
+        if summary:
+            st.markdown(safe_markdown_text(summary))
+        if stage.get("raw_text"):
+            st.text_area("사용자 입력 값", value=str(stage.get("raw_text") or ""), height=150, disabled=True, key=f"{key_prefix}_authoring_stage_{index}_raw")
+        if stage.get("refined_text"):
+            st.text_area("변환 텍스트", value=str(stage.get("refined_text") or ""), height=180, disabled=True, key=f"{key_prefix}_authoring_stage_{index}_refined")
+        for key, title in (
+            ("items", "생성 항목"),
+            ("supplement_requests", "보완 요청"),
+            ("item_reviews", "항목별 검토"),
+            ("duplicate_decision", "중복 처리 판단"),
+            ("write_result", "저장 결과"),
+            ("review", "검토 원본"),
+            ("errors", "오류"),
+            ("warnings", "경고"),
+        ):
+            value = stage.get(key)
+            if value:
+                st.markdown(f"#### {title}")
+                if key == "items" and isinstance(value, list):
+                    st.dataframe(authoring_item_summary_frame([item for item in value if isinstance(item, dict)]), hide_index=True, width="stretch")
+                render_compact_json(value, max_height=240)
+
+
 def render_authoring_result(result: dict[str, Any], key_prefix: str) -> None:
     ui_status = result.get("ui_status") or result.get("status")
-    tone = "success" if ui_status == "saved" else "warning" if ui_status in {"needs_more_input", "duplicate_choice_required", "warning"} else "error"
-    render_inline_status(str(ui_status), result.get("message", ""), tone)
-    tabs = st.tabs(["생성 item", "부족/중복", "검토/저장", "Trace"])
+    render_inline_status(authoring_status_label(ui_status), result.get("message", ""), authoring_status_tone(ui_status))
+    items = result.get("items") if isinstance(result.get("items"), list) else []
+    review = result.get("review") if isinstance(result.get("review"), dict) else {}
+    write_result = result.get("write_result") if isinstance(result.get("write_result"), dict) else {}
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Items", f"{len(items):,}")
+    summary_cols[1].metric("Ready", "Yes" if authoring_ready_to_save(result) else "No")
+    summary_cols[2].metric("Supplement", "Yes" if authoring_needs_supplement(result) else "No")
+    summary_cols[3].metric("Saved", "Yes" if authoring_saved(result) else "No")
+    tabs = st.tabs(["처리 과정", "생성 항목", "보완/중복", "저장 결과", "Raw JSON"])
     with tabs[0]:
-        items = result.get("items") if isinstance(result.get("items"), list) else []
+        stages = authoring_trace_stages(result)
+        if not stages:
+            render_inline_status("처리 과정", "trace가 응답에 포함되어 있지 않습니다.", "warning")
+        for index, stage in enumerate(stages, start=1):
+            render_authoring_stage(stage, index, key_prefix)
+    with tabs[1]:
         if items:
-            st.dataframe(pd.DataFrame([flatten_item(item) for item in items]), hide_index=True, width="stretch")
-            render_compact_json(items, max_height=320)
+            st.dataframe(authoring_item_summary_frame([item for item in items if isinstance(item, dict)]), hide_index=True, width="stretch")
+            render_compact_json(items, max_height=360)
         else:
             render_inline_status("items", "생성된 item이 없습니다.", "warning")
-    with tabs[1]:
-        render_detail_list("부족한 정보", (result.get("review") or {}).get("supplement_requests") or [])
+    with tabs[2]:
+        render_detail_list("부족한 정보", review.get("supplement_requests") or [])
+        render_detail_list("항목별 검토", review.get("item_reviews") or [])
         render_detail_list("비슷한 기존 정보", result.get("existing_matches") or [])
         render_detail_list("경고", result.get("conflict_warnings") or [])
-    with tabs[2]:
-        render_compact_json({"review": result.get("review"), "write_result": result.get("write_result")}, max_height=360)
-    with tabs[3]:
-        render_compact_json(result.get("trace") or {}, max_height=300)
         if result.get("pending_authoring_id"):
+            st.markdown("#### Pending authoring id")
             st.code(str(result["pending_authoring_id"]))
+    with tabs[3]:
+        if write_result:
+            render_compact_json(write_result, max_height=360)
+        else:
+            render_inline_status("저장 결과", "MongoDB writer 결과가 응답에 포함되어 있지 않습니다.", "warning")
+    with tabs[4]:
+        render_compact_json(result.get("api_response") or result, max_height=560)
+        st.download_button(
+            "Authoring 결과 JSON 다운로드",
+            data=json_text(result.get("api_response") or result),
+            file_name=f"metadata_authoring_{key_prefix}.json",
+            mime="application/json",
+            key=f"{key_prefix}_download_authoring_result",
+            width="stretch",
+        )
 
 
 def render_lookup_page(settings: dict[str, Any]) -> None:
@@ -570,6 +929,27 @@ def inject_style() -> None:
         .config-badge.ok { background: #dff7ef; color: #047857; }
         .config-badge.warn { background: #fff7ed; color: #b45309; }
         .config-value { color: #475467; font-size: 0.68rem; }
+        .session-store-list { margin-top: 0.42rem; }
+        .active-scope-panel {
+            border: 1px solid #bfd7ff; background: #eef5ff; border-radius: 0.45rem;
+            padding: 0.62rem; margin: 0.7rem 0 0.95rem;
+        }
+        .active-scope-panel.empty { border-color: var(--line); background: var(--surface); }
+        .active-scope-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.48rem; }
+        .active-scope-kicker { color: var(--muted); font-size: 0.58rem; font-weight: 800; text-transform: uppercase; }
+        .active-scope-title { color: var(--ink); font-size: 0.78rem; font-weight: 850; line-height: 1.2; }
+        .active-scope-state {
+            display: inline-flex; align-items: center; justify-content: center; min-height: 1.25rem;
+            padding: 0 0.42rem; border-radius: 0.34rem; background: #dbeafe; color: #1d4ed8;
+            font-size: 0.62rem; font-weight: 800;
+        }
+        .active-scope-panel.empty .active-scope-state { background: #f2f4f7; color: var(--muted); }
+        .active-scope-datasets { color: #1e3a8a; font-size: 0.72rem; font-weight: 800; margin-bottom: 0.42rem; }
+        .active-scope-empty-text, .active-scope-footer { color: var(--muted); font-size: 0.68rem; line-height: 1.45; }
+        .active-scope-chip-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.34rem; margin-bottom: 0.42rem; }
+        .active-scope-chip { border: 1px solid #d7e7ff; background: #ffffff; border-radius: 0.38rem; padding: 0.42rem; min-width: 0; }
+        .active-scope-chip-label { color: var(--muted); font-size: 0.58rem; font-weight: 800; text-transform: uppercase; }
+        .active-scope-chip-value { color: var(--ink); font-size: 0.72rem; font-weight: 850; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chat-topbar {
             position: sticky; top: 0; z-index: 20; min-height: 2.7rem;
             display: flex; align-items: center; justify-content: space-between; gap: 1rem;

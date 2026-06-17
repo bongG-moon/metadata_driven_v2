@@ -23,7 +23,7 @@
 | 07 | 07 Intent Prompt Builder | `langflow_components/main_flow/07_intent_prompt_builder.py` | intent JSON 생성을 위한 LLM prompt 생성 |
 | LLM-A | Gemini/LLM Intent JSON | Langflow 기본 Gemini/LLM node | intent JSON 생성 |
 | 08 | 08 Intent Plan Normalizer | `langflow_components/main_flow/08_intent_plan_normalizer.py` | intent JSON 정규화, retrieval_jobs 생성/보강 |
-| 08B | 01 MongoDB Data Loader | `langflow_components/main_flow/01_mongodb_data_loader.py` | `hydrate_mode=auto`로 필요한 후속 분석만 이전 결과 전체 rows 복원 |
+| 08B | 01 MongoDB Data Loader | `langflow_components/main_flow/01_mongodb_data_loader.py` | `restore_mode=auto`로 필요한 후속 분석만 이전 결과 전체 rows 복원 |
 | Retrieval | Main flow retriever nodes | `langflow_components/main_flow/09`~`14` | source_type별 데이터 조회 및 병합 |
 | 15 | 15 Retrieval Payload Adapter | `langflow_components/main_flow/15_retrieval_payload_adapter.py` | retrieval 결과를 `runtime_sources`와 compact `source_results`로 변환 |
 | 16 | 16 Pandas Prompt Builder | `langflow_components/main_flow/16_pandas_prompt_builder.py` | pandas code JSON 생성을 위한 LLM prompt 생성 |
@@ -45,7 +45,7 @@
 | 3 | State Store 또는 이전 final payload | `state` data | 00 Request State Loader | `state` | 선택. follow-up이면 필요 |
 | 4 | 00 Request State Loader | `payload` | 02 Metadata Context Loader | `payload` | compact state에 preview/summary가 있으면 기본 경로 |
 | 4B | 00 Request State Loader | `payload` | optional first 01 MongoDB Data Loader | `payload` | 이전 state에 `data_ref`만 있을 때 preview 복원 |
-| 5 | optional first 01 MongoDB Data Loader | `payload_out` | 02 Metadata Context Loader | `payload` | optional preview-hydrated state |
+| 5 | optional first 01 MongoDB Data Loader | `payload_out` | 02 Metadata Context Loader | `payload` | optional preview-restored state |
 | 6 | Text/Secret Input | value | 02 Metadata Context Loader | `mongo_uri` | MongoDB 사용 시 필요 |
 | 7 | Text Input | value | 02 Metadata Context Loader | `mongo_database` | 기본값 예: `metadata_driven_agent_v2` |
 | 8 | Text Input 3개 | value | 02 Metadata Context Loader | `domain_collection_name`, `table_catalog_collection_name`, `main_flow_filter_collection_name` | full collection name 입력 |
@@ -60,7 +60,7 @@
 | 11 | 07 Intent Prompt Builder | `intent_prompt` | LLM-A Gemini/LLM Intent JSON | prompt/message input | JSON-only 응답 권장 |
 | 12 | 06 Metadata QA Response Builder | `payload_out` | 08 Intent Plan Normalizer | `payload` | LLM 응답과 결합할 payload |
 | 13 | LLM-A Gemini/LLM Intent JSON | text/message output | 08 Intent Plan Normalizer | `llm_response` | intent JSON 응답 |
-| 14 | 08 Intent Plan Normalizer | `payload_out` | 01 MongoDB Data Loader second instance | `payload` | `hydrate_mode=auto` |
+| 14 | 08 Intent Plan Normalizer | `payload_out` | 01 MongoDB Data Loader second instance | `payload` | `restore_mode=auto` |
 | 15 | second 01 MongoDB Data Loader | `payload_out` | 09~13 retriever node(s) | `payload` | 이전 결과 전체 복원 반영 payload |
 | 16 | second 01 MongoDB Data Loader | `payload_out` | 15 Retrieval Payload Adapter | `main_payload` | main payload branch |
 | 17 | 14 Source Retrieval Merger | `retrieval_payload` | 15 Retrieval Payload Adapter | `retrieval_payload` | source 조회 결과 병합 |
@@ -134,7 +134,7 @@ State에 들어가는 핵심 값:
 - `current_data.product_key_values`
 - `followup_source_results`
 
-다음 turn 시작 시 `00 Request State Loader -> 01 MongoDB Data Loader -> 02 Metadata Context Loader` 순서로 연결하면 compact된 `current_data.data_ref`가 기본적으로 preview/summary로 복원됩니다. 후속 “이 제품”류 질문은 `product_key_values`를 우선 사용하므로 초반 full rows hydrate가 필요하지 않습니다.
+다음 turn 시작 시 `00 Request State Loader -> 01 MongoDB Data Loader -> 02 Metadata Context Loader` 순서로 연결하면 compact된 `current_data.data_ref`가 기본적으로 preview/summary로 복원됩니다. 후속 “이 제품”류 질문은 `product_key_values`를 우선 사용하므로 초반 full rows restore가 필요하지 않습니다.
 
 ## 4. Metadata Authoring Flow 공통 연결
 

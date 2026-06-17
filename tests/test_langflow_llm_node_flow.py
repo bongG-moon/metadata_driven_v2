@@ -648,7 +648,7 @@ def test_intent_normalizer_prunes_lot_status_for_followup_equipment_count(monkey
     assert [job["dataset_key"] for job in payload["retrieval_jobs"]] == ["equipment_status"]
     assert payload["retrieval_jobs"][0]["filters"] == [{"field": "PRODUCT_GRAIN", "op": "from_state"}]
     assert plan["step_plan"][0]["operation"] == "equipment_count_for_previous_products"
-    assert plan["state_hydrate_mode"] == "summary"
+    assert plan["previous_result_restore_mode"] == "summary"
 
 
 def test_retrieval_adapter_adds_standard_columns_from_physical_catalog_aliases(monkeypatch: Any) -> None:
@@ -675,7 +675,7 @@ def test_retrieval_adapter_adds_standard_columns_from_physical_catalog_aliases(m
     assert row["MCP_NO"] == "EMPTY"
 
 
-def test_intent_normalizer_marks_full_state_hydrate_for_previous_result_row_analysis(monkeypatch: Any) -> None:
+def test_intent_normalizer_marks_full_previous_result_restore_for_previous_result_row_analysis(monkeypatch: Any) -> None:
     request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
     metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
     intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
@@ -702,10 +702,68 @@ def test_intent_normalizer_marks_full_state_hydrate_for_previous_result_row_anal
     payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
     plan = payload["intent_plan"]
 
-    assert plan["requires_full_state_hydrate"] is True
-    assert plan["state_hydrate_mode"] == "full"
-    assert plan["state_hydrate_reason"] == "followup_analysis_needs_previous_rows"
+    assert plan["requires_full_previous_result_restore"] is True
+    assert plan["previous_result_restore_mode"] == "full"
+    assert plan["previous_result_restore_reason"] == "followup_analysis_needs_previous_rows"
     assert any("MongoDB에서 전체 row를 복원" in item for item in payload["info"])
+
+
+def test_intent_normalizer_reuses_previous_source_rows_for_this_time_breakdown(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload("이때 상세 device별로 알려줘", "test-session")
+    payload["state"] = {
+        "current_data": {
+            "columns": ["MODE", "PRODUCTION"],
+            "rows": [{"MODE": "LPDDR5", "PRODUCTION": 100}],
+            "row_count": 2,
+            "data_ref": {"store": "mongodb", "ref_id": "previous-result", "collection_name": "agent_v2_result_store"},
+            "data_is_preview": True,
+            "product_key_columns": ["MODE"],
+            "source_dataset_keys": ["production_today"],
+        },
+        "followup_source_results": [
+            {
+                "source_alias": "production_data",
+                "dataset_key": "production_today",
+                "source_type": "oracle",
+                "data_ref": {"store": "mongodb", "ref_id": "source-ref", "collection_name": "agent_v2_result_store"},
+                "row_count": 100,
+                "columns": ["MODE", "DEVICE", "PRODUCTION"],
+            }
+        ],
+    }
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    intent_llm_json = {
+        "intent_type": "single_retrieval_analysis",
+        "analysis_kind": "detail_rows",
+        "datasets": ["production_today"],
+        "retrieval_jobs": [
+            {
+                "dataset_key": "production_today",
+                "source_alias": "production_data",
+                "params": {"DATE": "20260612"},
+            }
+        ],
+        "step_plan": [{"step_id": "detail", "operation": "detail_rows", "source_alias": "production_data"}],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(intent_llm_json, ensure_ascii=False))
+    plan = payload["intent_plan"]
+
+    assert plan["intent_type"] == "followup_transform"
+    assert plan["analysis_kind"] == "aggregate_previous_source"
+    assert plan["reuse_previous_runtime_sources"] is True
+    assert plan["requires_full_previous_result_restore"] is True
+    assert plan["previous_result_restore_mode"] == "full"
+    assert plan["previous_result_restore_reason"] == "followup_reuses_previous_source_rows"
+    assert plan["retrieval_jobs"] == []
+    assert payload["retrieval_jobs"] == []
+    assert plan["datasets"] == ["production_today"]
+    assert plan["metric"] == "PRODUCTION"
+    assert plan["product_grain"] == ["MODE", "DEVICE"]
 
 
 def test_intent_normalizer_maps_logical_required_columns_to_dataset_columns(monkeypatch: Any) -> None:

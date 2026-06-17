@@ -9,11 +9,12 @@ from importlib import import_module
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
-from lfx.io import DataInput, MessageTextInput, Output
+from lfx.io import DataInput, DropdownInput, MessageTextInput, Output
 from lfx.schema.data import Data
 
 
 DEFAULT_RESULT_COLLECTION = "agent_v2_result_store"
+ENABLED_OPTIONS = ["true", "false"]
 SOURCE_METADATA_KEYS = (
     "dataset_key",
     "dataset_label",
@@ -415,7 +416,7 @@ class MongoDBDataStore(Component):
             value=DEFAULT_RESULT_COLLECTION,
             advanced=True,
         ),
-        MessageTextInput(name="enabled", display_name="Enabled", value="true", advanced=True),
+        DropdownInput(name="enabled", display_name="Enabled", options=ENABLED_OPTIONS, value="true", advanced=True),
         MessageTextInput(name="preview_row_limit", display_name="Preview Row Limit", value="5", advanced=True),
         MessageTextInput(name="min_rows", display_name="Min Rows To Store", value="1", advanced=True),
     ]

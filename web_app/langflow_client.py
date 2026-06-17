@@ -7,6 +7,8 @@ from typing import Any, Iterable
 
 import requests
 
+from .session_state_store import MongoDBSessionStateStore, MongoSessionStateSettings
+
 
 DEFAULT_COLLECTIONS = {
     "domain": "agent_v2_domain_items",
@@ -30,10 +32,18 @@ class LangflowSettings:
     input_type: str = "chat"
     output_type: str = "chat"
     timeout: int = 180
+    session_store: str = "disabled"
+    mongo_uri: str = ""
+    mongo_database: str = "metadata_driven_agent_v2"
+    session_state_collection: str = "agent_v2_session_states"
+    session_state_preview_row_limit: int = 5
+    session_state_history_limit: int = 10
 
     @classmethod
     def from_env(cls) -> "LangflowSettings":
         base_url = _env("LANGFLOW_BASE_URL") or _env("LANGFLOW_API_BASE_URL")
+        mongo_uri = _env("MONGODB_URI") or _env("MONGO_URI")
+        session_store = _env("WEB_SESSION_STORE") or ("mongodb" if mongo_uri else "disabled")
         return cls(
             api_key=_env("LANGFLOW_API_KEY"),
             main_api_url=_env("LANGFLOW_MAIN_API_URL") or _env("LANGFLOW_API_URL") or _flow_run_url(base_url, _env("LANGFLOW_MAIN_FLOW_ID")),
@@ -53,6 +63,12 @@ class LangflowSettings:
             input_type=_env("LANGFLOW_INPUT_TYPE") or "chat",
             output_type=_env("LANGFLOW_OUTPUT_TYPE") or "chat",
             timeout=_int_env("LANGFLOW_TIMEOUT_SECONDS", 180),
+            session_store=session_store,
+            mongo_uri=mongo_uri,
+            mongo_database=_env("MONGODB_DATABASE") or _env("MONGO_DB_NAME") or "metadata_driven_agent_v2",
+            session_state_collection=_env("MONGODB_SESSION_STATE_COLLECTION") or "agent_v2_session_states",
+            session_state_preview_row_limit=_int_env("SESSION_STATE_PREVIEW_ROW_LIMIT", 5),
+            session_state_history_limit=_int_env("SESSION_STATE_HISTORY_LIMIT", 10),
         )
 
     def authoring_url(self, metadata_type: str) -> str:
@@ -74,6 +90,7 @@ class LangflowSettings:
             "domain": bool(self.domain_authoring_api_url),
             "table_catalog": bool(self.table_catalog_authoring_api_url),
             "main_flow_filter": bool(self.main_flow_filter_authoring_api_url),
+            "session_state": self.session_store == "mongodb" and bool(self.mongo_uri),
         }
 
     def query_flow_url(self, selected_flow: str) -> str:
@@ -88,10 +105,13 @@ class LangflowSettings:
 class LangflowApiClient:
     def __init__(self, settings: LangflowSettings | None = None) -> None:
         self.settings = settings or LangflowSettings.from_env()
+        self.session_state_store = _build_session_state_store(self.settings)
 
     def run_query(self, question: str, session_id: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
+        effective_state = state if state is not None else self._load_session_state(session_id)
         if self.settings.router_api_url:
-            return self.run_orchestrated_query(question, session_id, state)
+            result = self.run_orchestrated_query(question, session_id, effective_state)
+            return self._attach_and_save_session_state(result, session_id, question)
         if not self.settings.main_api_url:
             raise ValueError("LANGFLOW_MAIN_API_URL 또는 LANGFLOW_MAIN_FLOW_ID가 설정되지 않았습니다.")
         raw_response = call_langflow_api(
@@ -101,13 +121,13 @@ class LangflowApiClient:
             session_id=session_id,
             input_type=self.settings.input_type,
             output_type=self.settings.output_type,
-            tweaks=build_main_flow_tweaks(state, session_id),
+            tweaks=build_main_flow_tweaks(effective_state, session_id),
             timeout=self.settings.timeout,
         )
         result = normalize_query_response(raw_response)
         result["api_mode"] = "langflow_api"
         result["raw_response"] = raw_response
-        return result
+        return self._attach_and_save_session_state(result, session_id, question)
 
     def run_orchestrated_query(self, question: str, session_id: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.settings.router_api_url:
@@ -143,6 +163,27 @@ class LangflowApiClient:
         result["selected_flow"] = selected_flow
         result["raw_route_response"] = raw_route_response
         result["raw_response"] = raw_flow_response
+        return result
+
+    def _load_session_state(self, session_id: str) -> dict[str, Any]:
+        if not self.session_state_store:
+            return {}
+        return self.session_state_store.load_state(session_id)
+
+    def _attach_and_save_session_state(self, result: dict[str, Any], session_id: str, question: str) -> dict[str, Any]:
+        if not self.session_state_store:
+            return result
+        state = result.get("state") if isinstance(result.get("state"), dict) else {}
+        write_status = self.session_state_store.save_state(
+            session_id,
+            state,
+            question=question,
+            response_type=str(result.get("response_type") or ""),
+        )
+        result["session_state_store"] = {
+            "load": dict(self.session_state_store.last_load_status),
+            "write": write_status,
+        }
         return result
 
     def run_authoring(self, metadata_type: str, raw_text: str, duplicate_action: str, session_id: str) -> dict[str, Any]:
@@ -196,6 +237,20 @@ def call_langflow_api(
     response.raise_for_status()
     parsed = response.json()
     return parsed if isinstance(parsed, dict) else {"response": parsed}
+
+
+def _build_session_state_store(settings: LangflowSettings) -> MongoDBSessionStateStore | None:
+    if str(settings.session_store or "").strip().lower() != "mongodb":
+        return None
+    store_settings = MongoSessionStateSettings(
+        enabled=bool(settings.mongo_uri),
+        mongo_uri=settings.mongo_uri,
+        mongo_database=settings.mongo_database,
+        collection_name=settings.session_state_collection,
+        preview_row_limit=settings.session_state_preview_row_limit,
+        history_limit=settings.session_state_history_limit,
+    )
+    return MongoDBSessionStateStore(store_settings)
 
 
 def build_main_flow_tweaks(state: dict[str, Any] | None, session_id: str) -> dict[str, Any] | None:

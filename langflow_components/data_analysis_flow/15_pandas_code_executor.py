@@ -209,6 +209,26 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
 
 
 def _fallback_result_df(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame | None:
+    if str(plan.get("analysis_kind") or "") == "aggregate_previous_source":
+        alias = _primary_source_alias(plan, runtime_sources)
+        rows = runtime_sources.get(alias) if alias else None
+        if not isinstance(rows, list):
+            return None
+        frame = _source_dataframe(rows, [], str(plan.get("analysis_kind") or ""))
+        if frame.empty:
+            return pd.DataFrame()
+        step_plan = plan.get("step_plan") if isinstance(plan.get("step_plan"), list) else []
+        first_step = step_plan[0] if step_plan and isinstance(step_plan[0], dict) else {}
+        group_by_value = first_step.get("group_by") if isinstance(first_step.get("group_by"), list) else plan.get("product_grain", [])
+        group_by = [str(column) for column in group_by_value if str(column) in frame.columns]
+        metric = str(first_step.get("metric") or plan.get("metric") or "").strip()
+        if not metric or metric not in frame.columns:
+            return None
+        clean = frame.copy()
+        clean[metric] = pd.to_numeric(clean[metric], errors="coerce").fillna(0)
+        if group_by:
+            return clean.groupby(group_by, dropna=False, as_index=False)[metric].sum()
+        return pd.DataFrame([{metric: clean[metric].sum()}])
     if str(plan.get("analysis_kind") or "") != "lot_quantity_summary":
         return None
     alias = _primary_source_alias(plan, runtime_sources)

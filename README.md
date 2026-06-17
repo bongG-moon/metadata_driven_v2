@@ -121,7 +121,7 @@ python tools\validate_llm_in_loop.py
 Main flow result rows use a separate full-name collection, `MONGODB_RESULT_COLLECTION` (default `agent_v2_result_store`).
 If the caller passes compact previous `state.current_data` with preview rows, row count, columns, `data_ref`, and product key summary, `00 Request State Loader` is enough before metadata loading.
 In `data_analysis_flow`, `04 Previous Result Restore Router` decides whether full previous rows are needed. Backend or Langflow branch logic should call `05 MongoDB Data Loader` only when `previous_result_restore.required=true`; `06 Previous Result Restore Merger` then merges the optional loader branch back into the main payload.
-When a follow-up question must recalculate, filter, sort, regroup, or show detail rows from the previous result itself, `03 Intent Plan Normalizer` sets `requires_full_state_hydrate=true` or `state_hydrate_mode=full`.
+When a follow-up question must recalculate, filter, sort, regroup, or show detail rows from the previous result itself, `03 Intent Plan Normalizer` sets `requires_full_previous_result_restore=true` or `previous_result_restore_mode=full`.
 `16 MongoDB Data Store` writes both source `runtime_sources` and pandas `analysis.rows` right after pandas execution, then leaves preview rows plus MongoDB `data_ref` pointers in the payload.
 Follow-up product context is carried in `state.current_data.product_key_values`, so product-key follow-ups do not need to load full previous rows.
 

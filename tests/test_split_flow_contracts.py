@@ -72,6 +72,10 @@ def test_split_flow_folders_have_expected_numbered_files() -> None:
             "02_diagnosis_rule_evaluator.py",
             "03_diagnosis_response_builder.py",
         ],
+        "session_state_flow": [
+            "00_mongodb_session_state_loader.py",
+            "01_mongodb_session_state_writer.py",
+        ],
     }
     for folder, files in expected.items():
         actual = [path.name for path in sorted((ROOT / "langflow_components" / folder).glob("*.py"))]
@@ -154,7 +158,7 @@ def test_previous_result_restore_router_and_merger_use_loader_for_full_mode() ->
     router = load_component("langflow_components/data_analysis_flow/04_previous_result_restore_router.py")
     merger = load_component("langflow_components/data_analysis_flow/06_previous_result_restore_merger.py")
     payload = {
-        "intent_plan": {"requires_full_state_hydrate": True},
+        "intent_plan": {"requires_full_previous_result_restore": True},
         "state": {"current_data": {"data_ref": {"store": "mongodb", "ref_id": "r1"}, "rows": [{"MODE": "A"}], "row_count": 100}},
     }
 
@@ -166,7 +170,7 @@ def test_previous_result_restore_router_and_merger_use_loader_for_full_mode() ->
     merged = merger.merge_previous_result_restore(routed["payload"], restored_payload)
 
     assert routed["restore_decision"]["required"] is True
-    assert routed["restore_payload"]["state_hydrate_mode"] == "full"
+    assert routed["restore_payload"]["previous_result_restore_mode"] == "full"
     assert merged["previous_result_restore"]["used_loader_payload"] is True
     assert merged["state"]["current_data"]["rows"] == [{"MODE": "A"}, {"MODE": "B"}]
 
@@ -174,7 +178,7 @@ def test_previous_result_restore_router_and_merger_use_loader_for_full_mode() ->
 def test_previous_result_restore_router_uses_source_refs_without_current_data_ref() -> None:
     router = load_component("langflow_components/data_analysis_flow/04_previous_result_restore_router.py")
     payload = {
-        "intent_plan": {"requires_full_state_hydrate": True},
+        "intent_plan": {"requires_full_previous_result_restore": True},
         "state": {
             "current_data": {"rows": [{"MODE": "A"}], "row_count": 1},
             "followup_source_results": [
@@ -193,7 +197,7 @@ def test_previous_result_restore_router_uses_source_refs_without_current_data_re
     assert routed["restore_decision"]["source_ref_count"] == 1
     assert routed["restore_decision"]["restore_ref_count"] == 1
     assert routed["restore_decision"]["data_ref"] == {}
-    assert routed["restore_payload"]["state_hydrate_mode"] == "full"
+    assert routed["restore_payload"]["previous_result_restore_mode"] == "full"
 
 
 def test_web_client_normalizes_route_response_and_builds_subflow_tweaks() -> None:

@@ -46,7 +46,7 @@ parallel:
 
 기본 정책은 flow 초반에는 이전 데이터를 전부 불러오지 않는 것입니다. `state.current_data`에는 `data_ref`, `row_count`, `columns`, preview rows, 제품 key summary 정도만 들고 갑니다.
 
-`05 MongoDB Data Loader`는 `Restore Mode=auto`로 두는 것을 권장합니다. `auto`는 `03 Intent Plan Normalizer`가 `requires_full_state_hydrate=true` 또는 `state_hydrate_mode=full`을 설정한 경우에만 full restore로 바뀝니다. 그 외에는 preview/summary 상태를 유지합니다.
+`05 MongoDB Data Loader`는 `Restore Mode=auto`로 두는 것을 권장합니다. `auto`는 `03 Intent Plan Normalizer`가 `requires_full_previous_result_restore=true` 또는 `previous_result_restore_mode=full`을 설정한 경우에만 full restore로 바뀝니다. 그 외에는 preview/summary 상태를 유지합니다.
 
 full restore가 실행되면 loader는 두 종류를 복원합니다.
 
@@ -64,7 +64,7 @@ full restore가 실행되면 loader는 두 종류를 복원합니다.
 - “현재 DA공정에서 재공이 가장 많은 제품 알려줘”
 - “이 제품의 이 공정에 할당된 장비 대수를 알려줘”
 
-이 경우에는 이전 결과 전체 row가 아니라 이전 결과에서 식별된 제품 key만 필요합니다. Normalizer는 `state_hydrate_mode=summary`를 유지하고, router는 `previous_result_restore.required=false`를 냅니다. 이후 retriever가 `equipment_assign` 같은 필요한 source만 새로 조회합니다.
+이 경우에는 이전 결과 전체 row가 아니라 이전 결과에서 식별된 제품 key만 필요합니다. Normalizer는 `previous_result_restore_mode=summary`를 유지하고, router는 `previous_result_restore.required=false`를 냅니다. 이후 retriever가 `equipment_assign` 같은 필요한 source만 새로 조회합니다.
 
 ### Full restore가 필요한 후속 질문
 
@@ -75,7 +75,7 @@ full restore가 실행되면 loader는 두 종류를 복원합니다.
 - “이전 결과 중 WIP가 100 이상인 것만 필터링해줘”
 - “방금 분석에 사용된 원본 재공 데이터를 제품별로 다시 집계해줘”
 
-이 경우에는 preview rows만으로 부족합니다. Normalizer가 `state_hydrate_mode=full`을 설정하고, router가 `previous_result_restore.required=true`를 냅니다. 조건부 branch에서 `05 MongoDB Data Loader`가 이전 결과와 이전 원본 refs를 MongoDB에서 전체 복원한 뒤 pandas 단계로 넘깁니다.
+이 경우에는 preview rows만으로 부족합니다. Normalizer가 `previous_result_restore_mode=full`을 설정하고, router가 `previous_result_restore.required=true`를 냅니다. 조건부 branch에서 `05 MongoDB Data Loader`가 이전 결과와 이전 원본 refs를 MongoDB에서 전체 복원한 뒤 pandas 단계로 넘깁니다.
 
 ## Branch Decision Contract
 
@@ -107,4 +107,4 @@ full restore가 실행되면 loader는 두 종류를 복원합니다.
 
 ## Naming Note
 
-이 구간의 표준 표현은 `Previous Result Restore` 또는 “이전 결과 복원”입니다. MongoDB loader 내부 입력 이름인 `hydrate_mode`는 기존 loader 호환을 위해 유지하지만, Langflow 화면 표시명은 `Restore Mode`로 둡니다.
+이 구간의 표준 표현은 `Previous Result Restore` 또는 “이전 결과 복원”입니다. MongoDB loader 내부 입력 이름인 `restore_mode`는 기존 loader 호환을 위해 유지하지만, Langflow 화면 표시명은 `Restore Mode`로 둡니다.

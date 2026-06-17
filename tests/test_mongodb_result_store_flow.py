@@ -139,24 +139,24 @@ def test_mongodb_store_compacts_runtime_sources_and_loader_keeps_preview_by_defa
     assert stored["source_results"][0]["data_ref"]["ref_id"] == data_ref["ref_id"]
     assert collection.docs[data_ref["ref_id"]]["rows"] == rows
 
-    hydrated = loader.load_payload_from_mongodb(
+    restored = loader.load_payload_from_mongodb(
         stored,
         mongo_uri="mongodb://fake",
         mongo_database="metadata_driven_agent_v2",
         result_collection_name="agent_v2_result_store",
     )
 
-    assert hydrated["runtime_sources"]["wip_total"] == rows[:1]
-    assert hydrated["runtime_sources_are_preview"] is True
-    assert hydrated["mongo_data_load"]["hydrate_mode"] == "preview"
-    assert hydrated["mongo_data_load"]["loaded"] is False
+    assert restored["runtime_sources"]["wip_total"] == rows[:1]
+    assert restored["runtime_sources_are_preview"] is True
+    assert restored["mongo_data_load"]["restore_mode"] == "preview"
+    assert restored["mongo_data_load"]["loaded"] is False
 
     full = loader.load_payload_from_mongodb(
         stored,
         mongo_uri="mongodb://fake",
         mongo_database="metadata_driven_agent_v2",
         result_collection_name="agent_v2_result_store",
-        hydrate_mode="full",
+        restore_mode="full",
     )
 
     assert full["runtime_sources"]["wip_total"] == rows
@@ -164,7 +164,7 @@ def test_mongodb_store_compacts_runtime_sources_and_loader_keeps_preview_by_defa
     assert full["mongo_data_load"]["loaded"] is True
 
 
-def test_mongodb_store_compacts_final_data_and_loader_hydrates_preview_then_full(monkeypatch: Any) -> None:
+def test_mongodb_store_compacts_final_data_and_loader_restores_preview_then_full(monkeypatch: Any) -> None:
     store = load_component("langflow_components/main_flow/18_mongodb_data_store.py")
     loader = load_component("langflow_components/main_flow/01_mongodb_data_loader.py")
     collection = FakeCollection()
@@ -190,25 +190,25 @@ def test_mongodb_store_compacts_final_data_and_loader_hydrates_preview_then_full
     assert stored["state"]["current_data"]["rows"] == rows[:1]
     assert stored["state"]["current_data"]["data_ref"]["store"] == "mongodb"
 
-    hydrated = loader.load_payload_from_mongodb(
+    restored = loader.load_payload_from_mongodb(
         stored,
         mongo_uri="mongodb://fake",
         mongo_database="metadata_driven_agent_v2",
         result_collection_name="agent_v2_result_store",
     )
 
-    assert hydrated["data"]["rows"] == rows[:1]
-    assert hydrated["data"]["data_ref_loaded"] is False
-    assert hydrated["data"]["data_ref_load_mode"] == "preview"
-    assert hydrated["state"]["current_data"]["rows"] == rows[:1]
-    assert hydrated["state"]["current_data"]["data_ref_loaded"] is False
+    assert restored["data"]["rows"] == rows[:1]
+    assert restored["data"]["data_ref_loaded"] is False
+    assert restored["data"]["data_ref_load_mode"] == "preview"
+    assert restored["state"]["current_data"]["rows"] == rows[:1]
+    assert restored["state"]["current_data"]["data_ref_loaded"] is False
 
     full = loader.load_payload_from_mongodb(
         stored,
         mongo_uri="mongodb://fake",
         mongo_database="metadata_driven_agent_v2",
         result_collection_name="agent_v2_result_store",
-        hydrate_mode="full",
+        restore_mode="full",
     )
 
     assert full["data"]["rows"] == rows
@@ -216,17 +216,17 @@ def test_mongodb_store_compacts_final_data_and_loader_hydrates_preview_then_full
     assert full["state"]["current_data"]["data_ref_loaded"] is True
 
     auto_payload = deepcopy(stored)
-    auto_payload["intent_plan"] = {"requires_full_state_hydrate": True}
+    auto_payload["intent_plan"] = {"requires_full_previous_result_restore": True}
     auto = loader.load_payload_from_mongodb(
         auto_payload,
         mongo_uri="mongodb://fake",
         mongo_database="metadata_driven_agent_v2",
         result_collection_name="agent_v2_result_store",
-        hydrate_mode="auto",
+        restore_mode="auto",
     )
 
-    assert auto["mongo_data_load"]["requested_hydrate_mode"] == "auto"
-    assert auto["mongo_data_load"]["hydrate_mode"] == "full"
+    assert auto["mongo_data_load"]["requested_restore_mode"] == "auto"
+    assert auto["mongo_data_load"]["restore_mode"] == "full"
     assert auto["state"]["current_data"]["rows"] == rows
 
 
@@ -303,7 +303,7 @@ def test_mongodb_loader_restores_followup_source_results_when_full_requested(mon
         }
         install_fake_pymongo(monkeypatch, collection)
         payload = {
-            "intent_plan": {"requires_full_state_hydrate": True},
+            "intent_plan": {"requires_full_previous_result_restore": True},
             "state": {
                 "followup_source_results": [
                     {
@@ -322,10 +322,10 @@ def test_mongodb_loader_restores_followup_source_results_when_full_requested(mon
             mongo_uri="mongodb://fake",
             mongo_database="metadata_driven_agent_v2",
             result_collection_name="agent_v2_result_store",
-            hydrate_mode="auto",
+            restore_mode="auto",
         )
 
-        assert restored["mongo_data_load"]["hydrate_mode"] == "full"
+        assert restored["mongo_data_load"]["restore_mode"] == "full"
         assert restored["runtime_sources"]["wip_data"] == source_rows
         assert restored["runtime_source_refs"]["wip_data"]["ref_id"] == "source-ref"
         assert restored["runtime_sources_are_preview"] is False
@@ -346,7 +346,7 @@ def test_mongodb_loader_uses_collection_name_from_data_ref(monkeypatch: Any) -> 
     }
     install_multi_fake_pymongo(monkeypatch, client)
     payload = {
-        "intent_plan": {"requires_full_state_hydrate": True},
+        "intent_plan": {"requires_full_previous_result_restore": True},
         "state": {
             "followup_source_results": [
                 {
@@ -367,14 +367,14 @@ def test_mongodb_loader_uses_collection_name_from_data_ref(monkeypatch: Any) -> 
         mongo_uri="mongodb://fake",
         mongo_database="metadata_driven_agent_v2",
         result_collection_name="agent_v2_result_store",
-        hydrate_mode="auto",
+        restore_mode="auto",
     )
 
     assert restored["runtime_sources"]["wip_data"] == [{"MODE": "A", "WIP": 10}]
     assert restored["mongo_data_load"]["loaded"] is True
 
 
-def test_answer_response_state_keeps_product_key_summary_without_full_hydrate() -> None:
+def test_answer_response_state_keeps_product_key_summary_without_full_restore() -> None:
     answer_builder = load_component("langflow_components/main_flow/20_answer_response_builder.py")
     payload = {
         "request": {"session_id": "session-1", "question": "previous products"},

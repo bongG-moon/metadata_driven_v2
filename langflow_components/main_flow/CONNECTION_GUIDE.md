@@ -14,7 +14,7 @@ This guide is based on the files in `langflow_components/main_flow`.
 - `target_dataset` in `metadata_route` is only a metadata-QA target pointer for dataset detail/query/example answers. It is not the analysis dataset list; normal analysis datasets are still chosen later by `07`/`08`.
 - `07 Intent Prompt Builder` still supports `direct_response_ready=true`. When metadata QA has already prepared a direct answer, node `07` emits a small skip prompt and downstream nodes pass the payload through.
 - The first `01 MongoDB Data Loader` is optional. If the caller passes compact previous `state.current_data` with `data_ref`, `row_count`, `columns`, preview `rows`, and product key summary, `00 Request State Loader` is enough.
-- Keep the second `01 MongoDB Data Loader` after `08 Intent Plan Normalizer` with `hydrate_mode=auto`. It loads full previous rows only when the normalized intent sets `requires_full_state_hydrate=true` or `state_hydrate_mode=full`.
+- Keep the second `01 MongoDB Data Loader` after `08 Intent Plan Normalizer` with `restore_mode=auto`. It loads full previous rows only when the normalized intent sets `requires_full_previous_result_restore=true` or `previous_result_restore_mode=full`.
 - `18 MongoDB Data Store` belongs immediately after `17 Pandas Code Executor`. It stores both original retrieval rows and pandas result rows, then leaves compact previews and `data_ref` pointers in the payload.
 
 ## Node Inventory
@@ -63,7 +63,7 @@ Chat Input
 -> 07 Intent Prompt Builder
 -> Intent LLM
 -> 08 Intent Plan Normalizer
--> 01 MongoDB Data Loader (second instance, hydrate_mode=auto)
+-> 01 MongoDB Data Loader (second instance, restore_mode=auto)
 -> 09/10/11/12/13 source retriever nodes
 -> 14 Source Retrieval Merger
 -> 15 Retrieval Payload Adapter
@@ -85,7 +85,7 @@ If the client cannot pass compact previous state and only has a MongoDB `data_re
 
 ```text
 00 Request State Loader
--> 01 MongoDB Data Loader (optional first instance, hydrate_mode=preview)
+-> 01 MongoDB Data Loader (optional first instance, restore_mode=preview)
 -> 02 Metadata Context Loader
 ```
 
@@ -97,7 +97,7 @@ If the client cannot pass compact previous state and only has a MongoDB `data_re
 | 2 | State store/web backend | Data | `00 Request State Loader` | `state` | Compact previous state |
 | 3 | `00 Request State Loader` | `payload` | `02 Metadata Context Loader` | `payload` | Preferred path when state already has preview/summary |
 | 3B | `00 Request State Loader` | `payload` | optional first `01 MongoDB Data Loader` | `payload` | Only when previous state needs preview hydration from MongoDB |
-| 3C | optional first `01 MongoDB Data Loader` | `payload_out` | `02 Metadata Context Loader` | `payload` | Optional preview-hydrated state |
+| 3C | optional first `01 MongoDB Data Loader` | `payload_out` | `02 Metadata Context Loader` | `payload` | Optional preview-restored state |
 | 4 | `02 Metadata Context Loader` | `payload_out` | `03 Route Candidate Builder` | `payload` | Metadata-backed route candidates |
 | 5 | `03 Route Candidate Builder` | `payload_out` | `04 Route Classifier Prompt Builder` | `payload` | Build question-type route prompt |
 | 6 | `04 Route Classifier Prompt Builder` | `route_prompt` | Route Classifier LLM | prompt/message | Small JSON route decision; can be skipped only when `route_llm_required=false` |
@@ -108,7 +108,7 @@ If the client cannot pass compact previous state and only has a MongoDB `data_re
 | 11 | `07 Intent Prompt Builder` | `intent_prompt` | Intent LLM | prompt/message | JSON intent |
 | 12 | `06 Metadata QA Response Builder` | `payload_out` | `08 Intent Plan Normalizer` | `payload` | Main payload branch |
 | 13 | Intent LLM | text/message | `08 Intent Plan Normalizer` | `llm_response` | Intent JSON response |
-| 14 | `08 Intent Plan Normalizer` | `payload_out` | second `01 MongoDB Data Loader` | `payload` | Set this loader to `hydrate_mode=auto` |
+| 14 | `08 Intent Plan Normalizer` | `payload_out` | second `01 MongoDB Data Loader` | `payload` | Set this loader to `restore_mode=auto` |
 | 15 | second `01 MongoDB Data Loader` | `payload_out` | source retriever nodes `09`~`13` | `payload` | Source-specific retrieval |
 | 16 | `10/11/12/13` | `retrieval_payload` | `14 Source Retrieval Merger` | matching source input | Merge real source payloads |
 | 17 | `14 Source Retrieval Merger` | `retrieval_payload` | `15 Retrieval Payload Adapter` | `retrieval_payload` | Unified source rows |
@@ -147,7 +147,7 @@ If the client cannot pass compact previous state and only has a MongoDB `data_re
 }
 ```
 
-The optional first `01 MongoDB Data Loader` exists for compatibility with states that have only `data_ref` and no preview rows/summary. It should use `hydrate_mode=preview`.
+The optional first `01 MongoDB Data Loader` exists for compatibility with states that have only `data_ref` and no preview rows/summary. It should use `restore_mode=preview`.
 
 ## Metadata QA Policy
 
@@ -161,15 +161,15 @@ Metadata QA answers are metadata-backed after question-type routing:
 
 When `direct_response_ready=true`, downstream analysis and answer nodes pass through the payload. `18 MongoDB Data Store` does not store metadata QA rows in the result collection.
 
-## Full Hydrate Policy
+## Full Restore Policy
 
 Default follow-up planning uses only compact state: `data_ref`, `row_count`, `columns`, preview rows, and product key summary.
 
-Full hydrate is requested only after intent normalization when the question needs the previous result rows themselves, for example:
+Full restore is requested only after intent normalization when the question needs the previous result rows themselves, for example:
 
 - Re-show all/detail/original rows from the previous result.
 - Re-sort, filter, rank, regroup, or aggregate the previous result.
-- LLM intent explicitly sets `requires_full_state_hydrate=true` or `state_hydrate_mode=full`.
+- LLM intent explicitly sets `requires_full_previous_result_restore=true` or `previous_result_restore_mode=full`.
 
 Questions such as "이 제품의 할당 장비 대수 알려줘" usually need only previous product keys plus a new `equipment_status` retrieval, so summary state is enough.
 
@@ -177,9 +177,9 @@ Questions such as "이 제품의 할당 장비 대수 알려줘" usually need on
 
 | Target node | Input | Recommended value |
 | --- | --- | --- |
-| optional first `01 MongoDB Data Loader` | `hydrate_mode` | `preview` |
+| optional first `01 MongoDB Data Loader` | `restore_mode` | `preview` |
 | optional first `01 MongoDB Data Loader` | `preview_row_limit` | `5` |
-| second `01 MongoDB Data Loader` | `hydrate_mode` | `auto` |
+| second `01 MongoDB Data Loader` | `restore_mode` | `auto` |
 | second `01 MongoDB Data Loader` | `preview_row_limit` | `5` |
 | `02 Metadata Context Loader` | `domain_collection_name` | `agent_v2_domain_items` |
 | `02 Metadata Context Loader` | `table_catalog_collection_name` | `agent_v2_table_catalog_items` |

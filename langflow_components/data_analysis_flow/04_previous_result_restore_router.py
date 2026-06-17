@@ -7,7 +7,6 @@ from lfx.custom.custom_component.component import Component
 from lfx.io import DataInput, Output
 from lfx.schema.data import Data
 
-
 def route_previous_result_restore(payload_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
@@ -39,7 +38,7 @@ def route_previous_result_restore(payload_value: Any) -> dict[str, Any]:
 
     restore_payload = deepcopy(payload)
     restore_payload["previous_result_restore"] = deepcopy(decision)
-    restore_payload["state_hydrate_mode"] = "full" if required else "summary"
+    restore_payload["previous_result_restore_mode"] = "full" if required else "summary"
     restore_payload["restore_previous_result_mode"] = "full" if required else "summary"
 
     return {
@@ -53,20 +52,18 @@ def _restore_mode(payload: dict[str, Any], plan: dict[str, Any]) -> str:
     values = [
         plan.get("previous_result_restore_mode"),
         plan.get("restore_previous_result_mode"),
-        plan.get("state_hydrate_mode"),
-        plan.get("hydrate_mode"),
+        plan.get("restore_mode"),
         payload.get("previous_result_restore_mode"),
         payload.get("restore_previous_result_mode"),
-        payload.get("state_hydrate_mode"),
-        payload.get("hydrate_mode"),
+        payload.get("restore_mode"),
     ]
     if _truthy(plan.get("requires_full_previous_result_restore")):
         return "full"
-    if _truthy(plan.get("requires_full_state_hydrate")) or _truthy(payload.get("requires_full_state_hydrate")):
+    if _truthy(payload.get("requires_full_previous_result_restore")):
         return "full"
     for value in values:
         text = str(value or "").strip().lower()
-        if text in {"full", "all", "rows", "restore_full", "hydrate_full"}:
+        if text in {"full", "all", "rows", "restore_full", "restore_full"}:
             return "full"
         if text in {"summary", "preview", "metadata", "none", "skip"}:
             return "summary"

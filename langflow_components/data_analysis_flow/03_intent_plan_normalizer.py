@@ -10,7 +10,6 @@ from lfx.custom.custom_component.component import Component
 from lfx.io import DataInput, MessageTextInput, Output
 from lfx.schema.data import Data
 
-
 def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
     if payload.get("direct_response_ready"):
@@ -99,8 +98,10 @@ def normalize_intent_payload(payload_value: Any, llm_response_value: Any) -> dic
             notes.append("step_plan이 없어 조회 alias를 기준으로 기본 분석 단계를 보완했습니다.")
     _normalize_step_plan_columns(plan, normalized_jobs, catalog)
     _augment_step_plan_defaults(plan, normalized_jobs, metadata, payload)
-    plan["route"] = _route_for_intent(plan.get("intent_type"), len(normalized_jobs))
     _mark_previous_result_restore_need(plan, payload, question, notes)
+    normalized_jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else normalized_jobs
+    plan["datasets"] = _unique([job["dataset_key"] for job in normalized_jobs if isinstance(job, dict) and job.get("dataset_key")] or plan.get("datasets", []))
+    plan["route"] = _route_for_intent(plan.get("intent_type"), len(normalized_jobs))
     plan["normalizer_errors"] = errors
     plan["normalizer_notes"] = notes
 
@@ -146,8 +147,8 @@ def _base_plan(llm_json: dict[str, Any], product_grain: list[str]) -> dict[str, 
         "threshold_percent",
         "top_n",
         "bottom_n",
-        "requires_full_state_hydrate",
-        "state_hydrate_mode",
+        "requires_full_previous_result_restore",
+        "previous_result_restore_mode",
     ):
         if key in llm_json:
             plan[key] = deepcopy(llm_json[key])
@@ -1179,22 +1180,26 @@ def _mark_previous_result_restore_need(
     if not _has_previous_mongo_data_ref(state, current_data):
         return
 
-    explicit = plan.get("requires_full_state_hydrate")
+    explicit = plan.get("requires_full_previous_result_restore")
     if _truthy_value(explicit):
-        plan["requires_full_state_hydrate"] = True
-        plan["state_hydrate_mode"] = "full"
-        plan["state_hydrate_reason"] = "llm_requested_full_state_rows"
+        plan["requires_full_previous_result_restore"] = True
+        plan["previous_result_restore_mode"] = "full"
+        plan["previous_result_restore_reason"] = "llm_requested_full_previous_rows"
         _append_once(notes, "후속 질문 계획에서 MongoDB의 이전 결과 전체 row 복원을 요청했습니다.")
         return
 
+    if _previous_source_reuse_requested(question) and _has_previous_source_mongo_ref(state):
+        _mark_previous_source_reuse(plan, state, question, notes)
+        return
+
     if _state_product_keys_are_enough(plan, question):
-        plan.setdefault("state_hydrate_mode", "summary")
+        plan.setdefault("previous_result_restore_mode", "summary")
         return
 
     if _followup_needs_previous_rows(plan, question):
-        plan["requires_full_state_hydrate"] = True
-        plan["state_hydrate_mode"] = "full"
-        plan["state_hydrate_reason"] = "followup_analysis_needs_previous_rows"
+        plan["requires_full_previous_result_restore"] = True
+        plan["previous_result_restore_mode"] = "full"
+        plan["previous_result_restore_reason"] = "followup_analysis_needs_previous_rows"
         _append_once(notes, "후속 분석에 이전 결과 row가 필요하여 pandas 실행 전에 MongoDB에서 전체 row를 복원하도록 표시했습니다.")
 
 
@@ -1225,6 +1230,182 @@ def _is_mongo_ref(value: Any) -> bool:
     return isinstance(value, dict) and str(value.get("store") or "").lower() == "mongodb" and bool(value.get("ref_id"))
 
 
+def _has_previous_source_mongo_ref(state: dict[str, Any]) -> bool:
+    source_results = state.get("followup_source_results")
+    if isinstance(source_results, list):
+        for item in source_results:
+            if isinstance(item, dict) and _is_mongo_ref(item.get("data_ref")):
+                return True
+    runtime_source_refs = state.get("runtime_source_refs") if isinstance(state.get("runtime_source_refs"), dict) else {}
+    return any(_is_mongo_ref(data_ref) for data_ref in runtime_source_refs.values())
+
+
+def _previous_source_reuse_requested(question: str) -> bool:
+    previous_terms = [
+        "이때",
+        "그때",
+        "해당 때",
+        "이 결과",
+        "그 결과",
+        "해당 결과",
+        "이 데이터",
+        "그 데이터",
+        "해당 데이터",
+        "방금",
+        "직전",
+        "앞에서",
+        "위에서",
+        "이전 결과",
+        "previous result",
+        "prior result",
+        "same data",
+    ]
+    reshape_terms = [
+        "상세",
+        "세부",
+        "나눠",
+        "나누",
+        "분해",
+        "breakdown",
+        "drilldown",
+        "group",
+        "groupby",
+        "group by",
+        "별로",
+        "별",
+        "device별",
+        "디바이스별",
+        "공정별",
+        "제품별",
+        "mode별",
+    ]
+    new_lookup_terms = ["장비", "설비", "할당", "대수", "lot", "hold", "보류", "작업대기", "작업중"]
+    if _mentions_any(question, new_lookup_terms):
+        return False
+    return _mentions_any(question, previous_terms) and _mentions_any(question, reshape_terms)
+
+
+def _mark_previous_source_reuse(
+    plan: dict[str, Any],
+    state: dict[str, Any],
+    question: str,
+    notes: list[str],
+) -> None:
+    aliases = _previous_source_aliases(state)
+    dataset_keys = _previous_source_dataset_keys(state)
+    group_by = _previous_source_group_by(plan, state, question)
+    metric = _previous_source_metric(state, question)
+
+    plan["intent_type"] = "followup_transform"
+    plan["depends_on_state"] = True
+    plan["reuse_previous_runtime_sources"] = True
+    plan["requires_full_previous_result_restore"] = True
+    plan["previous_result_restore_mode"] = "full"
+    plan["previous_result_restore_reason"] = "followup_reuses_previous_source_rows"
+    plan["retrieval_jobs"] = []
+    if dataset_keys:
+        plan["datasets"] = dataset_keys
+
+    if group_by and metric:
+        plan["analysis_kind"] = "aggregate_previous_source"
+        plan["metric"] = metric
+        plan["product_grain"] = group_by
+        plan["step_plan"] = [
+            {
+                "step_id": "aggregate_previous_source",
+                "operation": "aggregate_previous_source",
+                "source_alias": aliases[0] if aliases else "",
+                "source_aliases": aliases,
+                "group_by": group_by,
+                "metric": metric,
+                "aggregation": "sum",
+            }
+        ]
+    else:
+        plan["analysis_kind"] = "detail_rows"
+        plan["step_plan"] = [
+            {
+                "step_id": "previous_source_detail_rows",
+                "operation": "detail_rows",
+                "source_alias": aliases[0] if aliases else "",
+                "source_aliases": aliases,
+                "columns": _previous_source_columns(state),
+            }
+        ]
+
+    _append_once(notes, "후속 질문이 이전 조회 원본의 재가공 요청으로 보여 새 조회 없이 MongoDB source ref를 전체 복원하도록 조정했습니다.")
+
+
+def _previous_source_aliases(state: dict[str, Any]) -> list[str]:
+    aliases: list[str] = []
+    source_results = state.get("followup_source_results")
+    if isinstance(source_results, list):
+        for item in source_results:
+            if isinstance(item, dict):
+                alias = str(item.get("source_alias") or item.get("dataset_key") or "").strip()
+                if alias:
+                    aliases.append(alias)
+    runtime_source_refs = state.get("runtime_source_refs") if isinstance(state.get("runtime_source_refs"), dict) else {}
+    aliases.extend(str(alias) for alias in runtime_source_refs if str(alias or "").strip())
+    return _unique(aliases)
+
+
+def _previous_source_dataset_keys(state: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    source_results = state.get("followup_source_results")
+    if isinstance(source_results, list):
+        for item in source_results:
+            if isinstance(item, dict) and item.get("dataset_key"):
+                keys.append(str(item["dataset_key"]))
+    current_data = state.get("current_data") if isinstance(state.get("current_data"), dict) else {}
+    source_dataset_keys = current_data.get("source_dataset_keys")
+    if isinstance(source_dataset_keys, list):
+        keys.extend(str(item) for item in source_dataset_keys if str(item or "").strip())
+    return _unique(keys)
+
+
+def _previous_source_columns(state: dict[str, Any]) -> list[str]:
+    columns: list[str] = []
+    source_results = state.get("followup_source_results")
+    if isinstance(source_results, list):
+        for item in source_results:
+            if isinstance(item, dict) and isinstance(item.get("columns"), list):
+                columns.extend(str(column) for column in item["columns"] if str(column or "").strip())
+    return _unique(columns)
+
+
+def _previous_source_group_by(plan: dict[str, Any], state: dict[str, Any], question: str) -> list[str]:
+    current_data = state.get("current_data") if isinstance(state.get("current_data"), dict) else {}
+    group_by: list[str] = []
+    if isinstance(current_data.get("product_key_columns"), list):
+        group_by.extend(str(column) for column in current_data["product_key_columns"] if str(column or "").strip())
+    elif isinstance(plan.get("product_grain"), list):
+        group_by.extend(str(column) for column in plan["product_grain"] if str(column or "").strip())
+    lowered = question.lower()
+    dimension_terms = {
+        "DEVICE": ["device", "디바이스", "device별", "디바이스별"],
+        "DEVICE_DESC": ["device_desc", "device desc", "디바이스명"],
+        "OPER_NAME": ["공정", "oper", "oper_name", "공정별"],
+        "MODE": ["mode별", "모드별"],
+    }
+    for column, terms in dimension_terms.items():
+        if any(term.lower() in lowered for term in terms):
+            group_by.append(column)
+    return _unique(group_by)
+
+
+def _previous_source_metric(state: dict[str, Any], question: str) -> str:
+    if _mentions_any(question, ["생산", "production", "실적"]):
+        return "PRODUCTION"
+    if _mentions_any(question, ["재공", "wip"]):
+        return "WIP"
+    columns = _previous_source_columns(state)
+    for metric in ["PRODUCTION", "WIP", "OUT_PLAN", "TARGET_QTY", "LOT_COUNT", "WF_QTY", "DIE_QTY"]:
+        if metric in columns:
+            return metric
+    return ""
+
+
 def _state_product_keys_are_enough(plan: dict[str, Any], question: str) -> bool:
     if str(plan.get("analysis_kind") or "") not in {"equipment_for_previous_products", "equipment_count_for_previous_products"}:
         return False
@@ -1246,6 +1427,8 @@ def _followup_needs_previous_rows(plan: dict[str, Any], question: str) -> bool:
         return True
     previous_terms = [
         "이전",
+        "이때",
+        "그때",
         "앞",
         "위",
         "방금",
@@ -1290,7 +1473,7 @@ def _followup_needs_previous_rows(plan: dict[str, Any], question: str) -> bool:
 def _truthy_value(value: Any) -> bool:
     if isinstance(value, bool):
         return value
-    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on", "full", "all", "rows", "hydrate_full"}
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on", "full", "all", "rows", "restore_full"}
 
 
 def _rows_from_current_data(current_data: dict[str, Any]) -> list[dict[str, Any]]:

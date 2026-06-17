@@ -197,3 +197,46 @@ def test_pandas_executor_falls_back_for_lot_quantity_summary_to_frame_error() ->
 
     assert result["analysis"]["status"] == "ok"
     assert result["analysis"]["rows"][0] == {"LOT_COUNT": 2, "WF_QTY": 9, "DIE_QTY": 60}
+
+
+def test_pandas_executor_falls_back_for_previous_source_aggregation() -> None:
+    payload = {
+        "intent_plan": {
+            "analysis_kind": "aggregate_previous_source",
+            "product_grain": ["MODE", "DEVICE"],
+            "metric": "PRODUCTION",
+            "step_plan": [
+                {
+                    "source_alias": "production_data",
+                    "group_by": ["MODE", "DEVICE"],
+                    "metric": "PRODUCTION",
+                }
+            ],
+        },
+        "state": {},
+        "runtime_sources": {
+            "production_data": [
+                {"MODE": "LPDDR5", "DEVICE": "D1", "PRODUCTION": 10},
+                {"MODE": "LPDDR5", "DEVICE": "D1", "PRODUCTION": 15},
+                {"MODE": "LPDDR5", "DEVICE": "D2", "PRODUCTION": 20},
+            ]
+        },
+    }
+    pandas_llm_json = {
+        "code": "result_df = missing_previous_source_df",
+        "output_columns": ["MODE", "DEVICE", "PRODUCTION"],
+        "reasoning_steps": [],
+    }
+
+    for executor_path in [
+        "langflow_components/main_flow/17_pandas_code_executor.py",
+        "langflow_components/data_analysis_flow/15_pandas_code_executor.py",
+    ]:
+        pandas_executor = load_component(executor_path)
+        result = pandas_executor.execute_pandas_from_llm(payload, json.dumps(pandas_llm_json, ensure_ascii=False))
+
+        assert result["analysis"]["status"] == "ok"
+        assert result["analysis"]["rows"] == [
+            {"MODE": "LPDDR5", "DEVICE": "D1", "PRODUCTION": 25},
+            {"MODE": "LPDDR5", "DEVICE": "D2", "PRODUCTION": 20},
+        ]

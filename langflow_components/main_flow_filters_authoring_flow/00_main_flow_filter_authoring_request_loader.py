@@ -15,6 +15,7 @@ DEFAULT_COLLECTION_NAME = "agent_v2_main_flow_filters"
 COLLECTION_ENV_KEY = "MONGODB_MAIN_FLOW_FILTER_COLLECTION"
 LEGACY_COLLECTION_SUFFIX = "main_flow_filters"
 DUPLICATE_ACTION_OPTIONS = ["ask", "merge", "replace", "skip", "create_new"]
+LOAD_EXISTING_OPTIONS = ["true", "false"]
 
 
 def build_main_flow_filter_authoring_request(
@@ -162,7 +163,7 @@ class MainFlowFilterAuthoringRequestLoader(Component):
         MessageTextInput(name="mongo_database", display_name="Mongo Database", value="metadata_driven_agent_v2"),
         MessageTextInput(name="collection_name", display_name="Collection Name", value=DEFAULT_COLLECTION_NAME),
         DropdownInput(name="duplicate_action", display_name="Duplicate Action", options=DUPLICATE_ACTION_OPTIONS, value="ask", advanced=True),
-        MessageTextInput(name="load_existing", display_name="Load Existing Items", value="true", advanced=True),
+        DropdownInput(name="load_existing", display_name="Load Existing Items", options=LOAD_EXISTING_OPTIONS, value="true", advanced=True),
         MessageTextInput(name="load_limit", display_name="Load Limit", value="200", advanced=True),
     ]
     outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]

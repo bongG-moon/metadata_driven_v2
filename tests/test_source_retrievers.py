@@ -336,6 +336,72 @@ def test_retrieval_payload_adapter_builds_compact_main_payload():
     assert payload["source_results"][0]["preview_rows"][0]["HOLD_CD"] == "QA_HOLD"
 
 
+def test_retrieval_payload_adapter_preserves_full_restored_sources_without_new_retrieval():
+    restored_rows = [
+        {"DEVICE": "D1", "PRODUCTION": 10},
+        {"DEVICE": "D2", "PRODUCTION": 20},
+        {"DEVICE": "D3", "PRODUCTION": 30},
+    ]
+    main_payload = {
+        "request": {"session_id": "test", "question": "이때 상세 device별로 알려줘"},
+        "intent_plan": {"intent_type": "followup_transform", "requires_full_previous_result_restore": True},
+        "runtime_sources": {"production_data": restored_rows},
+        "runtime_sources_are_preview": False,
+        "state": {
+            "followup_source_results": [
+                {
+                    "source_alias": "production_data",
+                    "dataset_key": "production_today",
+                    "source_type": "oracle",
+                    "data_ref": {
+                        "store": "mongodb",
+                        "ref_id": "source-ref",
+                        "collection_name": "agent_v2_result_store",
+                    },
+                    "row_count": 3,
+                    "columns": ["DEVICE", "PRODUCTION"],
+                }
+            ]
+        },
+    }
+    retrieval_payload = {"retrieval_payload": {"source_results": []}}
+
+    for adapter_path in [
+        "langflow_components/main_flow/15_retrieval_payload_adapter.py",
+        "langflow_components/data_analysis_flow/13_retrieval_payload_adapter.py",
+    ]:
+        adapter = _load_flow_component(adapter_path)
+        payload = adapter.adapt_retrieval_payload(main_payload, retrieval_payload)
+
+        assert payload["runtime_sources"]["production_data"] == restored_rows
+        assert payload["source_results"][0]["data_ref"]["ref_id"] == "source-ref"
+        assert payload["source_results"][0]["reused_from_previous_source"] is True
+        assert payload["reused_previous_runtime_sources"] is True
+        assert "이전 조회 원본을 새 조회 없이 재사용했습니다." in payload["info"]
+
+
+def test_retrieval_payload_adapter_does_not_reuse_preview_sources_without_full_restore():
+    main_payload = {
+        "request": {"session_id": "test", "question": "상세 device별로 알려줘"},
+        "intent_plan": {"intent_type": "single_retrieval_analysis"},
+        "runtime_sources": {"production_data": [{"DEVICE": "D1", "PRODUCTION": 10}]},
+        "runtime_sources_are_preview": True,
+        "state": {},
+    }
+    retrieval_payload = {"retrieval_payload": {"source_results": []}}
+
+    for adapter_path in [
+        "langflow_components/main_flow/15_retrieval_payload_adapter.py",
+        "langflow_components/data_analysis_flow/13_retrieval_payload_adapter.py",
+    ]:
+        adapter = _load_flow_component(adapter_path)
+        payload = adapter.adapt_retrieval_payload(main_payload, retrieval_payload)
+
+        assert payload["runtime_sources"] == {}
+        assert payload["source_results"] == []
+        assert "reused_previous_runtime_sources" not in payload
+
+
 def _source_plan(job: dict) -> dict:
     return {"intent_plan": {"route": "single_retrieval", "retrieval_jobs": [job]}, "state": {}}
 
@@ -351,6 +417,15 @@ def _load_component(filename: str):
 
 def _load_main_component(filename: str):
     path = ROOT / "langflow_components" / "main_flow" / filename
+    spec = importlib.util.spec_from_file_location("test_" + path.stem, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_flow_component(relative_path: str):
+    path = ROOT / relative_path
     spec = importlib.util.spec_from_file_location("test_" + path.stem, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

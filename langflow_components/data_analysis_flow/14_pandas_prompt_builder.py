@@ -126,6 +126,13 @@ def _analysis_instruction(plan: dict[str, Any]) -> str:
         )
     if kind == "aggregate_wip_total":
         return "Return one row with SCOPE=plan.scope_label or ALL and WIP=sum(WIP)."
+    if kind == "aggregate_previous_source":
+        return (
+            "Use the restored previous runtime source rows, not a new retrieval. "
+            "Read rows from step_plan[0].source_alias when present, otherwise use the first available source. "
+            "Group by step_plan[0].group_by or product_grain, sum plan.metric, and return the group columns plus the metric. "
+            "If group_by is empty, return one total row for the metric."
+        )
     if kind == "overall_production_wip_target":
         return (
             "Sum PRODUCTION, WIP, and OUT_PLAN independently and return one row. "

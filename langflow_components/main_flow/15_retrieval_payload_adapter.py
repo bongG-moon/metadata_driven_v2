@@ -6,7 +6,6 @@ from lfx.io import DataInput, MessageTextInput, Output
 from lfx.schema.data import Data
 from lfx.schema.message import Message
 
-
 def adapt_retrieval_payload(main_payload_value: Any, retrieval_payload_value: Any) -> dict[str, Any]:
     main_payload = _payload(main_payload_value)
     if main_payload.get("direct_response_ready"):
@@ -17,13 +16,16 @@ def adapt_retrieval_payload(main_payload_value: Any, retrieval_payload_value: An
         if isinstance(retrieval_wrapper.get("retrieval_payload"), dict)
         else retrieval_wrapper
     )
+    source_results = [item for item in retrieval_payload.get("source_results", []) if isinstance(item, dict)]
+    if not source_results:
+        reused_payload = _reuse_existing_runtime_sources(main_payload)
+        if reused_payload is not None:
+            return reused_payload
     runtime_sources: dict[str, list[dict[str, Any]]] = {}
     compact_results: list[dict[str, Any]] = []
     errors: list[str] = []
     metadata = main_payload.get("metadata") if isinstance(main_payload.get("metadata"), dict) else {}
-    for result in retrieval_payload.get("source_results", []):
-        if not isinstance(result, dict):
-            continue
+    for result in source_results:
         source_alias = str(result.get("source_alias") or result.get("dataset_key") or "")
         dataset_key = str(result.get("dataset_key") or "")
         source_type = str(result.get("source_type") or "dummy")
@@ -48,6 +50,99 @@ def adapt_retrieval_payload(main_payload_value: Any, retrieval_payload_value: An
     next_payload["status"] = "warning" if errors else next_payload.get("status", "ok")
     next_payload["errors"] = list(next_payload.get("errors", [])) + errors
     return next_payload
+
+
+def _reuse_existing_runtime_sources(main_payload: dict[str, Any]) -> dict[str, Any] | None:
+    runtime_sources = main_payload.get("runtime_sources") if isinstance(main_payload.get("runtime_sources"), dict) else {}
+    if not runtime_sources or not _can_reuse_existing_runtime_sources(main_payload):
+        return None
+    next_payload = deepcopy(main_payload)
+    next_payload["runtime_sources"] = deepcopy(runtime_sources)
+    next_payload["source_results"] = _existing_source_results(main_payload, runtime_sources)
+    next_payload["reused_previous_runtime_sources"] = True
+    next_payload["info"] = _append_unique_info(
+        next_payload.get("info"),
+        "이전 조회 원본을 새 조회 없이 재사용했습니다.",
+    )
+    return next_payload
+
+
+def _can_reuse_existing_runtime_sources(main_payload: dict[str, Any]) -> bool:
+    if main_payload.get("runtime_sources_are_preview") is False:
+        return True
+    previous_restore = main_payload.get("previous_result_restore")
+    if isinstance(previous_restore, dict) and (
+        _truthy(previous_restore.get("required")) or _truthy(previous_restore.get("used_loader_payload"))
+    ):
+        return True
+    plan = main_payload.get("intent_plan") if isinstance(main_payload.get("intent_plan"), dict) else {}
+    if _truthy(plan.get("requires_full_previous_result_restore")):
+        return True
+    mode = str(plan.get("previous_result_restore_mode") or "").strip().lower()
+    return mode in {"full", "all", "rows", "restore_full", "restore_full"}
+
+
+def _existing_source_results(
+    main_payload: dict[str, Any],
+    runtime_sources: dict[str, Any],
+) -> list[dict[str, Any]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    for item in _candidate_source_results(main_payload):
+        compact = deepcopy(item)
+        compact.pop("data", None)
+        compact.pop("rows", None)
+        keys = [
+            str(compact.get("source_alias") or "").strip(),
+            str(compact.get("dataset_key") or "").strip(),
+        ]
+        for key in keys:
+            if key and key not in by_key:
+                by_key[key] = compact
+
+    compact_results = []
+    for alias, rows_value in runtime_sources.items():
+        alias_text = str(alias or "").strip()
+        rows = [dict(row) for row in rows_value if isinstance(row, dict)] if isinstance(rows_value, list) else []
+        compact = deepcopy(by_key.get(alias_text, {}))
+        compact.setdefault("source_alias", alias_text)
+        compact.setdefault("dataset_key", compact.get("dataset_key") or alias_text)
+        compact.setdefault("source_type", compact.get("source_type") or "restored")
+        compact.setdefault("row_count", len(rows))
+        compact.setdefault("columns", _columns_from_rows(rows))
+        compact.setdefault("preview_rows", deepcopy(rows[:5]))
+        compact["reused_from_previous_source"] = True
+        compact_results.append(compact)
+    return compact_results
+
+
+def _candidate_source_results(main_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    source_results = main_payload.get("source_results")
+    if isinstance(source_results, list):
+        candidates.extend(dict(item) for item in source_results if isinstance(item, dict))
+    state = main_payload.get("state") if isinstance(main_payload.get("state"), dict) else {}
+    followup_source_results = state.get("followup_source_results")
+    if isinstance(followup_source_results, list):
+        candidates.extend(dict(item) for item in followup_source_results if isinstance(item, dict))
+    return candidates
+
+
+def _columns_from_rows(rows: list[dict[str, Any]]) -> list[str]:
+    if not rows:
+        return []
+    columns: list[str] = []
+    for row in rows:
+        for column in row:
+            if column not in columns:
+                columns.append(column)
+    return columns
+
+
+def _append_unique_info(value: Any, message: str) -> list[str]:
+    items = [str(item) for item in value] if isinstance(value, list) else []
+    if message not in items:
+        items.append(message)
+    return items
 
 
 def _rows_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -124,6 +219,12 @@ def _payload(value: Any) -> dict[str, Any]:
         return deepcopy(value)
     data = getattr(value, "data", None)
     return deepcopy(data) if isinstance(data, dict) else {}
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "full", "required"}
 
 
 class RetrievalPayloadAdapter(Component):

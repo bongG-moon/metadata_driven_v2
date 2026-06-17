@@ -164,6 +164,47 @@ def test_metadata_authoring_duplicate_action_inputs_are_dropdowns() -> None:
         assert duplicate_input.options == ["use_payload", "ask", "merge", "replace", "skip", "create_new"]
 
 
+def test_fixed_choice_inputs_are_dropdowns() -> None:
+    fixed_choice_inputs = {
+        "main_flow/01_mongodb_data_loader.py": {
+            "enabled": ("true", ["true", "false"]),
+            "restore_mode": ("auto", ["auto", "preview", "full"]),
+        },
+        "data_analysis_flow/05_mongodb_data_loader.py": {
+            "enabled": ("true", ["true", "false"]),
+            "restore_mode": ("auto", ["auto", "preview", "full"]),
+        },
+        "main_flow/18_mongodb_data_store.py": {
+            "enabled": ("true", ["true", "false"]),
+        },
+        "data_analysis_flow/16_mongodb_data_store.py": {
+            "enabled": ("true", ["true", "false"]),
+        },
+        "session_state_flow/00_mongodb_session_state_loader.py": {
+            "enabled": ("true", ["true", "false"]),
+        },
+        "session_state_flow/01_mongodb_session_state_writer.py": {
+            "enabled": ("true", ["true", "false"]),
+        },
+        "domain_authoring_flow/00_domain_authoring_request_loader.py": {
+            "load_existing": ("true", ["true", "false"]),
+        },
+        "table_catalog_authoring_flow/00_table_catalog_authoring_request_loader.py": {
+            "load_existing": ("true", ["true", "false"]),
+        },
+        "main_flow_filters_authoring_flow/00_main_flow_filter_authoring_request_loader.py": {
+            "load_existing": ("true", ["true", "false"]),
+        },
+    }
+
+    for relative_path, inputs in fixed_choice_inputs.items():
+        for input_name, (expected_value, expected_options) in inputs.items():
+            input_item = _component_input(relative_path, input_name)
+            assert input_item.__class__.__name__ == "_DropdownField"
+            assert input_item.value == expected_value
+            assert input_item.options == expected_options
+
+
 def _component_input(relative_path: str, input_name: str):
     path = PROJECT_ROOT / "langflow_components" / relative_path
     module_name = f"input_contract_{path.stem}".replace(".", "_")

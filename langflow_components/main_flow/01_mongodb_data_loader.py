@@ -7,11 +7,13 @@ from importlib import import_module
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
-from lfx.io import DataInput, MessageTextInput, Output
+from lfx.io import DataInput, DropdownInput, MessageTextInput, Output
 from lfx.schema.data import Data
 
 
 DEFAULT_RESULT_COLLECTION = "agent_v2_result_store"
+ENABLED_OPTIONS = ["true", "false"]
+RESTORE_MODE_OPTIONS = ["auto", "preview", "full"]
 
 
 def load_payload_from_mongodb(
@@ -20,7 +22,7 @@ def load_payload_from_mongodb(
     mongo_database: Any = "",
     result_collection_name: Any = "",
     enabled: Any = "true",
-    hydrate_mode: Any = "preview",
+    restore_mode: Any = "preview",
     preview_row_limit: Any = "5",
 ) -> dict[str, Any]:
     payload = _payload(payload_value)
@@ -33,8 +35,8 @@ def load_payload_from_mongodb(
     uri = _clean(mongo_uri) or os.getenv("MONGODB_URI", "")
     database = _clean(mongo_database) or os.getenv("MONGODB_DATABASE", "metadata_driven_agent_v2")
     collection_name = _clean(result_collection_name) or os.getenv("MONGODB_RESULT_COLLECTION", DEFAULT_RESULT_COLLECTION)
-    requested_mode = _hydrate_mode(hydrate_mode)
-    mode = _resolve_hydrate_mode(requested_mode, payload)
+    requested_mode = _restore_mode(restore_mode)
+    mode = _resolve_restore_mode(requested_mode, payload)
     preview_limit = _positive_int(preview_row_limit, default=5, minimum=0)
     missing = []
     if not uri:
@@ -52,21 +54,21 @@ def load_payload_from_mongodb(
     cache: dict[str, dict[str, Any]] = {}
     try:
         client, collection = _connect_collection(uri, database, collection_name)
-        hydrated = _hydrate_refs(
+        restored = _restore_refs(
             payload,
             collection,
             loaded,
             skipped,
             cache,
             path="",
-            hydrate_mode=mode,
+            restore_mode=mode,
             preview_limit=preview_limit,
         )
-        hydrated["mongo_data_load"] = {
+        restored["mongo_data_load"] = {
             "enabled": True,
             "loaded": bool(loaded),
-            "hydrate_mode": mode,
-            "requested_hydrate_mode": requested_mode,
+            "restore_mode": mode,
+            "requested_restore_mode": requested_mode,
             "preview_row_limit": preview_limit,
             "ref_count": len(loaded),
             "unique_ref_count": len(cache),
@@ -75,7 +77,7 @@ def load_payload_from_mongodb(
             "result_collection_name": collection_name,
             "errors": [],
         }
-        return hydrated
+        return restored
     except Exception as exc:
         return {**payload, "mongo_data_load": {"enabled": True, "loaded": False, "ref_count": 0, "errors": [str(exc)]}}
     finally:
@@ -84,14 +86,14 @@ def load_payload_from_mongodb(
             close()
 
 
-def _hydrate_refs(
+def _restore_refs(
     value: Any,
     collection: Any,
     loaded: list[dict[str, Any]],
     skipped: list[dict[str, Any]],
     cache: dict[str, dict[str, Any]],
     path: str,
-    hydrate_mode: str,
+    restore_mode: str,
     preview_limit: int,
 ) -> Any:
     if isinstance(value, dict):
@@ -99,14 +101,14 @@ def _hydrate_refs(
             return deepcopy(value)
 
         result = {
-            key: _hydrate_refs(
+            key: _restore_refs(
                 item,
                 collection,
                 loaded,
                 skipped,
                 cache,
                 f"{path}.{key}" if path else key,
-                hydrate_mode=hydrate_mode,
+                restore_mode=restore_mode,
                 preview_limit=preview_limit,
             )
             for key, item in value.items()
@@ -114,7 +116,7 @@ def _hydrate_refs(
 
         runtime_refs = result.get("runtime_source_refs") if isinstance(result.get("runtime_source_refs"), dict) else {}
         if runtime_refs:
-            if hydrate_mode == "full":
+            if restore_mode == "full":
                 runtime_sources = result.get("runtime_sources") if isinstance(result.get("runtime_sources"), dict) else {}
                 runtime_sources = deepcopy(runtime_sources)
                 for alias, data_ref in runtime_refs.items():
@@ -147,16 +149,16 @@ def _hydrate_refs(
                             }
                         )
 
-        if path == "" and hydrate_mode == "full":
+        if path == "" and restore_mode == "full":
             _restore_followup_source_results(result, collection, loaded, cache)
 
         data_ref = result.get("data_ref") if isinstance(result.get("data_ref"), dict) else {}
         if _is_mongo_ref(data_ref):
-            if not _should_hydrate_ref(path):
+            if not _should_restore_ref(path):
                 skipped.append({"path": path, "ref_id": data_ref.get("ref_id"), "reason": "metadata_only"})
                 return result
             target_key = _row_target_key(result, path)
-            if hydrate_mode != "full":
+            if restore_mode != "full":
                 existing_rows = result.get(target_key)
                 if isinstance(existing_rows, list):
                     _mark_preview_ref(result, data_ref, existing_rows, target_key, preview_limit)
@@ -203,14 +205,14 @@ def _hydrate_refs(
         return result
     if isinstance(value, list):
         return [
-            _hydrate_refs(
+            _restore_refs(
                 item,
                 collection,
                 loaded,
                 skipped,
                 cache,
                 f"{path}[{index}]",
-                hydrate_mode=hydrate_mode,
+                restore_mode=restore_mode,
                 preview_limit=preview_limit,
             )
             for index, item in enumerate(value)
@@ -388,7 +390,7 @@ def _metadata_only_path(path: str) -> bool:
     )
 
 
-def _should_hydrate_ref(path: str) -> bool:
+def _should_restore_ref(path: str) -> bool:
     normalized = path.lower()
     return bool(
         normalized.endswith("data")
@@ -443,27 +445,27 @@ def _truthy(value: Any) -> bool:
     return str(value or "").strip().lower() not in {"", "0", "false", "no", "off", "none", "null"}
 
 
-def _hydrate_mode(value: Any) -> str:
+def _restore_mode(value: Any) -> str:
     text = str(value or "").strip().lower()
     if text in {"auto", "conditional"}:
         return "auto"
-    if text in {"full", "all", "rows", "hydrate_full"}:
+    if text in {"full", "all", "rows", "restore_full"}:
         return "full"
     return "preview"
 
 
-def _resolve_hydrate_mode(mode: str, payload: dict[str, Any]) -> str:
+def _resolve_restore_mode(mode: str, payload: dict[str, Any]) -> str:
     if mode != "auto":
         return mode
-    return "full" if _requires_full_state_hydrate(payload) else "preview"
+    return "full" if _requires_full_previous_result_restore(payload) else "preview"
 
 
-def _requires_full_state_hydrate(payload: dict[str, Any]) -> bool:
+def _requires_full_previous_result_restore(payload: dict[str, Any]) -> bool:
     plan = payload.get("intent_plan") if isinstance(payload.get("intent_plan"), dict) else {}
-    if _truthy(plan.get("requires_full_state_hydrate")):
+    if _truthy(plan.get("requires_full_previous_result_restore")):
         return True
-    state_mode = str(plan.get("state_hydrate_mode") or "").strip().lower()
-    return state_mode in {"full", "all", "rows", "hydrate_full"}
+    restore_mode = str(plan.get("previous_result_restore_mode") or "").strip().lower()
+    return restore_mode in {"full", "all", "rows", "restore_full"}
 
 
 def _positive_int(value: Any, default: int, minimum: int) -> int:
@@ -511,8 +513,8 @@ class MongoDBDataLoader(Component):
             value=DEFAULT_RESULT_COLLECTION,
             advanced=True,
         ),
-        MessageTextInput(name="enabled", display_name="Enabled", value="true", advanced=True),
-        MessageTextInput(name="hydrate_mode", display_name="Restore Mode", value="auto", advanced=True),
+        DropdownInput(name="enabled", display_name="Enabled", options=ENABLED_OPTIONS, value="true", advanced=True),
+        DropdownInput(name="restore_mode", display_name="Restore Mode", options=RESTORE_MODE_OPTIONS, value="auto", advanced=True),
         MessageTextInput(name="preview_row_limit", display_name="Preview Row Limit", value="5", advanced=True),
     ]
     outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]
@@ -524,13 +526,13 @@ class MongoDBDataLoader(Component):
             getattr(self, "mongo_database", ""),
             getattr(self, "result_collection_name", ""),
             getattr(self, "enabled", "true"),
-            getattr(self, "hydrate_mode", "preview"),
+            getattr(self, "restore_mode", "preview"),
             getattr(self, "preview_row_limit", "5"),
         )
         meta = result.get("mongo_data_load", {}) if isinstance(result, dict) else {}
         self.status = {
             "loaded": meta.get("loaded", False),
-            "hydrate_mode": meta.get("hydrate_mode"),
+            "restore_mode": meta.get("restore_mode"),
             "ref_count": meta.get("ref_count", 0),
             "errors": len(meta.get("errors", [])) if isinstance(meta.get("errors"), list) else 0,
         }
