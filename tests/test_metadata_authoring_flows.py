@@ -206,6 +206,74 @@ def test_table_catalog_authoring_normalizes_detail_columns_and_filter_mappings()
     assert item_payload["date_format"] == "YYYY-MM-DD"
 
 
+def test_table_catalog_authoring_backfills_goodocs_doc_id_without_sheet_or_query() -> None:
+    normalizer = load_module("langflow_components/table_catalog_authoring_flow/04_table_catalog_authoring_result_normalizer.py")
+    raw_text = """목표2 계획 데이터는 target으로 등록해줘.
+화면에 보일 이름은 Target2 Goodocs Plan이면 돼.
+일자별 계획 정보를 담고 있는 이력 데이터야.
+Goodocs 목표2 문서에서 일자와 제품 속성별 INPUT계획, OUT계획을 가져오는 데이터야.
+이 데이터는 Goodocs source이고 별도 필수 조회 파라미터는 없어.
+DATE 값 형식은 YYYY-MM-DD야. 필터 조건 걸 때 이 부분을 잘 고려해서 구현해줘야 해
+위 DATE 값 형식은 target dataset의 table catalog metadata에 date_format=YYYY-MM-DD로 저장되어야 해.
+기본 목표 수량은 OUT계획이고, 계획/목표 데이터로 사용해.
+계획 수량은 INPUT계획과 OUT계획 두 컬럼을 모두 사용해. 두 컬럼 모두 분석 수량으로 쓰는 계획 수량 컬럼이야.
+Goodocs 문서 ID는 131314153513515135 이야
+목표2 문서에는 DATE, Mode, DEN, TECH, PKG1, PKG2, LEAD, ORG, MCP NO, INPUT계획, OUT계획 항목이 있어.
+INPUT계획은 투입 계획 수량이고 INPUT_PLAN, 투입계획이라고도 불러.
+OUT계획은 산출 계획 수량이고 TARGET, OUT_PLAN, 생산목표라고도 불러.
+filter_mappings는 DATE -> DATE, MODE -> Mode, DEN -> DEN, TECH -> TECH, PKG_TYPE1 -> PKG1, PKG_TYPE2 -> PKG2, LEAD -> LEAD, MCP_NO -> MCP NO로 연결해줘."""
+    payload = {
+        "metadata_type": "table_catalog",
+        "raw_text": raw_text,
+        "refined_text": "Goodocs 목표2 문서에서 일자와 제품 속성별 계획 정보를 가져오는 target 데이터입니다.",
+        "errors": [],
+        "warnings": [],
+    }
+    llm_json = {
+        "items": [
+            {
+                "dataset_key": "target2_plan",
+                "payload": {
+                    "display_name": "Target2 Goodocs Plan",
+                    "dataset_family": "target",
+                    "date_scope": "history",
+                    "source_type": "goodocs",
+                    "source_config": {"source_type": "goodocs"},
+                    "required_params": ["DATE"],
+                    "required_param_mappings": {"DATE": ["DATE"]},
+                    "columns": ["DATE", "OUT계획"],
+                },
+            }
+        ],
+        "missing_information": [],
+        "warnings": [],
+    }
+
+    normalized = normalizer.normalize_table_catalog_authoring_result(payload, json.dumps(llm_json, ensure_ascii=False))
+
+    assert normalized["errors"] == []
+    item = normalized["items"][0]
+    item_payload = item["payload"]
+    assert item["dataset_key"] == "target"
+    assert item_payload["source_type"] == "goodocs"
+    assert item_payload["source_config"]["doc_id"] == "131314153513515135"
+    assert "sheet_name" not in item_payload["source_config"]
+    assert "db_key" not in item_payload["source_config"]
+    assert "query_template" not in item_payload["source_config"]
+    assert item_payload["required_params"] == []
+    assert item_payload["required_param_mappings"] == {}
+    assert item_payload["date_format"] == "YYYY-MM-DD"
+    assert item_payload["primary_quantity_column"] == ["INPUT_PLAN", "OUT_PLAN"]
+    assert item_payload["columns"] == ["DATE", "Mode", "DEN", "TECH", "PKG1", "PKG2", "LEAD", "ORG", "MCP NO", "INPUT계획", "OUT계획"]
+    assert item_payload["filter_mappings"]["PKG_TYPE1"] == ["PKG1"]
+    assert item_payload["filter_mappings"]["MCP_NO"] == ["MCP NO"]
+    assert item_payload["standard_column_aliases"]["MODE"] == ["Mode"]
+    assert item_payload["standard_column_aliases"]["PKG_TYPE1"] == ["PKG1"]
+    assert item_payload["standard_column_aliases"]["MCP_NO"] == ["MCP NO"]
+    assert item_payload["standard_column_aliases"]["INPUT_PLAN"] == ["INPUT계획"]
+    assert item_payload["standard_column_aliases"]["OUT_PLAN"] == ["OUT계획", "TARGET"]
+
+
 def test_table_catalog_authoring_backfills_structured_fields_from_raw_text() -> None:
     normalizer = load_module("langflow_components/table_catalog_authoring_flow/04_table_catalog_authoring_result_normalizer.py")
     raw_text = """당일용 생산 실적 데이터는 production_today로 등록해줘.
@@ -312,6 +380,41 @@ def test_table_catalog_writer_does_not_block_missing_default_detail_columns() ->
 
     assert result["review"]["ready_to_save"] is True
     assert result["review"]["supplement_requests"] == []
+
+
+def test_table_catalog_writer_does_not_block_optional_goodocs_sheet_or_query_fields() -> None:
+    writer = load_module("langflow_components/table_catalog_authoring_flow/07_table_catalog_review_writer.py")
+    payload = {
+        "metadata_type": "table_catalog",
+        "items": [
+            {
+                "dataset_key": "target",
+                "payload": {
+                    "display_name": "Target2 Goodocs Plan",
+                    "source_type": "goodocs",
+                    "source_config": {"source_type": "goodocs", "doc_id": "131314153513515135"},
+                    "columns": ["DATE", "OUT계획"],
+                },
+            }
+        ],
+        "duplicate_decision": {"action": "ask", "requires_user_choice": False},
+        "errors": [],
+    }
+    review_json = {
+        "ready_to_save": False,
+        "supplement_requests": [
+            {"field": "source_config.sheet_name", "reason": "Goodocs 문서에서 데이터를 읽으려면 시트 이름이 필요합니다."},
+            {"field": "source_config.query_template", "reason": "스키마에 query_template이 필요합니다."},
+            {"field": "source_config.db_key", "reason": "db_key가 필요합니다."},
+        ],
+        "item_reviews": [{"dataset_key": "target", "decision": "needs_fix", "reason": "sheet_name이 없습니다."}],
+    }
+
+    result = writer.review_and_write_table_catalog_payload(payload, json.dumps(review_json, ensure_ascii=False), mongo_uri="")
+
+    assert result["review"]["ready_to_save"] is True
+    assert result["review"]["supplement_requests"] == []
+    assert result["review"]["item_reviews"][0]["decision"] == "pass"
 
 
 def test_table_catalog_writer_allows_false_review_without_actionable_blockers() -> None:

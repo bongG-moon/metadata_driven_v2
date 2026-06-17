@@ -105,6 +105,10 @@ def _execute_generated_pandas_code(
             raise ValueError("Generated code must assign a pandas DataFrame to result_df.")
         result_df = result_df.copy()
         result_df = _normalize_result_columns(result_df, plan)
+        fallback_df = _fallback_result_df(plan, runtime_sources)
+        if _should_replace_empty_generated_result(result_df, fallback_df):
+            result_df = _normalize_result_columns(fallback_df, plan)
+            code = code + "\n# executor_fallback: generated code returned an empty contract result"
     except Exception as exc:
         fallback_df = _fallback_result_df(plan, runtime_sources)
         if fallback_df is None:
@@ -209,6 +213,8 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
 
 
 def _fallback_result_df(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame | None:
+    if _is_top_wip_product_oldest_lot_plan(plan):
+        return _fallback_top_wip_product_oldest_lot(plan, runtime_sources)
     if str(plan.get("analysis_kind") or "") == "aggregate_previous_source":
         alias = _primary_source_alias(plan, runtime_sources)
         rows = runtime_sources.get(alias) if alias else None
@@ -241,6 +247,98 @@ def _fallback_result_df(plan: dict[str, Any], runtime_sources: dict[str, Any]) -
     die_source = "SUB_PROD_QTY" if "SUB_PROD_QTY" in frame.columns else "DIE_QTY"
     die_qty = frame[die_source].sum() if die_source in frame.columns else 0
     return pd.DataFrame([{"LOT_COUNT": lot_count, "WF_QTY": wf_qty, "DIE_QTY": die_qty}])
+
+
+def _should_replace_empty_generated_result(result_df: pd.DataFrame, fallback_df: pd.DataFrame | None) -> bool:
+    return bool(result_df.empty and fallback_df is not None and not fallback_df.empty)
+
+
+def _fallback_top_wip_product_oldest_lot(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame:
+    wip_alias = _source_alias_for_dataset(plan, runtime_sources, "wip")
+    lot_alias = _source_alias_for_dataset(plan, runtime_sources, "lot")
+    wip_rows = runtime_sources.get(wip_alias) if wip_alias else None
+    lot_rows = runtime_sources.get(lot_alias) if lot_alias else None
+    if not isinstance(wip_rows, list) or not isinstance(lot_rows, list):
+        return pd.DataFrame()
+    wip_df = _source_dataframe(wip_rows, [], str(plan.get("analysis_kind") or ""))
+    lot_df = _source_dataframe(lot_rows, [], str(plan.get("analysis_kind") or ""))
+    if wip_df.empty or lot_df.empty or "WIP" not in wip_df.columns or "IN_TAT" not in lot_df.columns or "LOT_ID" not in lot_df.columns:
+        return pd.DataFrame()
+
+    product_keys = _shared_product_keys(plan, wip_df, lot_df)
+    if not product_keys:
+        return pd.DataFrame()
+
+    wip_work = wip_df.copy()
+    wip_work["WIP"] = pd.to_numeric(wip_work["WIP"], errors="coerce").fillna(0)
+    top_product = (
+        wip_work.groupby(product_keys, dropna=False, as_index=False)["WIP"]
+        .sum()
+        .sort_values("WIP", ascending=False)
+        .head(1)
+    )
+    if top_product.empty:
+        return pd.DataFrame()
+
+    lot_work = lot_df.copy()
+    mask = pd.Series(True, index=lot_work.index)
+    top_row = top_product.iloc[0]
+    for column in product_keys:
+        mask = mask & (lot_work[column].astype(str) == str(top_row[column]))
+    lot_work = lot_work[mask].copy()
+    if lot_work.empty:
+        return pd.DataFrame(columns=[*product_keys, "WIP", "LOT_ID", "IN_TAT"])
+    lot_work["IN_TAT"] = pd.to_numeric(lot_work["IN_TAT"], errors="coerce")
+    lot_work = lot_work.sort_values("IN_TAT", ascending=False).head(1)
+    lot_work["WIP"] = top_row["WIP"]
+    for column in product_keys:
+        lot_work[column] = top_row[column]
+    return lot_work[[*product_keys, "WIP", "LOT_ID", "IN_TAT"]]
+
+
+def _source_alias_for_dataset(plan: dict[str, Any], runtime_sources: dict[str, Any], token: str) -> str:
+    for job in plan.get("retrieval_jobs", []) if isinstance(plan.get("retrieval_jobs"), list) else []:
+        if not isinstance(job, dict):
+            continue
+        text = " ".join(str(job.get(key) or "") for key in ("dataset_key", "source_alias", "purpose")).lower()
+        if token in text:
+            alias = str(job.get("source_alias") or job.get("dataset_key") or "")
+            if alias in runtime_sources:
+                return alias
+    for alias in runtime_sources:
+        if token in str(alias).lower():
+            return str(alias)
+    return ""
+
+
+def _shared_product_keys(plan: dict[str, Any], wip_df: pd.DataFrame, lot_df: pd.DataFrame) -> list[str]:
+    plan_keys = plan.get("product_grain") if isinstance(plan.get("product_grain"), list) else []
+    candidates = [str(column) for column in plan_keys if str(column) in wip_df.columns and str(column) in lot_df.columns]
+    if candidates:
+        return candidates
+    default_keys = ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO", "TSV_DIE_TYP"]
+    return [column for column in default_keys if column in wip_df.columns and column in lot_df.columns]
+
+
+def _is_top_wip_product_oldest_lot_plan(plan: dict[str, Any]) -> bool:
+    kind = str(plan.get("analysis_kind") or "").lower()
+    if kind in {
+        "top_wip_product_oldest_lot",
+        "wip_top_product_oldest_lot",
+        "top_wip_product_lot_in_tat",
+        "oldest_lot_for_top_wip_product",
+    }:
+        return True
+    jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
+    has_wip = any(_job_text_contains(job, "wip") for job in jobs if isinstance(job, dict))
+    has_lot = any(_job_text_contains(job, "lot") for job in jobs if isinstance(job, dict))
+    step_text = json.dumps(plan.get("step_plan") or [], ensure_ascii=False).lower()
+    return has_wip and has_lot and "in_tat" in step_text and "wip" in step_text
+
+
+def _job_text_contains(job: dict[str, Any], token: str) -> bool:
+    text = " ".join(str(job.get(key) or "") for key in ("dataset_key", "source_alias", "purpose")).lower()
+    return token in text
 
 
 def _primary_source_alias(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> str:
@@ -318,6 +416,8 @@ def _preferred_columns(plan: dict[str, Any]) -> list[str]:
         return ["EQP_MODEL", "EQP_COUNT", "PRESS_CNT"]
     if kind == "equipment_count_for_previous_products":
         return [*product_keys, "EQP_COUNT"]
+    if _is_top_wip_product_oldest_lot_plan(plan):
+        return [*product_keys, "WIP", "LOT_ID", "IN_TAT"]
     return []
 
 

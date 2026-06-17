@@ -111,7 +111,7 @@ DATE 값 형식은 YYYY-MM-DD야. 필터 조건 걸 때 이 부분을 잘 고려
 위 DATE 값 형식은 target dataset의 table catalog metadata에 date_format=YYYY-MM-DD로 저장되어야 해.
 기본 목표 수량은 OUT계획이고, 계획/목표 데이터로 사용해.
 계획 수량은 INPUT계획과 OUT계획 두 컬럼을 모두 사용해. 두 컬럼 모두 분석 수량으로 쓰는 계획 수량 컬럼이야.
-Goodocs 문서 ID는 GOODOCS_TARGET2_DOCUMENT_ID를 사용하고 sheet_name은 목표2야.
+Goodocs 문서 ID는 GOODOCS_TARGET2_DOCUMENT_ID를 사용해. 특정 시트를 고정해서 읽어야 하는 환경이면 sheet_name은 목표2야.
 목표2 문서에는 DATE, Mode, DEN, TECH, PKG1, PKG2, LEAD, ORG, MCP NO, INPUT계획, OUT계획 항목이 있어.
 DATE는 계획 일자이고 예시값은 2026-06-09야.
 Mode는 제품 mode이고 MODE라고도 불러.

@@ -54,7 +54,7 @@
 | `oracle` | `db_key`, `query_template` |
 | `h_api` | `api_url` |
 | `datalake` | `query_template` |
-| `goodocs` | `doc_id`, `sheet_name` |
+| `goodocs` | `doc_id` (`sheet_name`은 특정 시트를 고정해서 읽을 때만 선택 입력) |
 | `dummy` | 운영용이 아니면 최소 `columns`, `dataset_family` |
 
 ## MongoDB Shape

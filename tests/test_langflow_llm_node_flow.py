@@ -965,6 +965,86 @@ def test_pandas_executor_normalizes_llm_result_column_names() -> None:
     assert result["analysis"]["rows"][0]["PRODUCTION"] == 7
 
 
+def test_pandas_prompt_for_unknown_multi_step_plan_does_not_request_empty_result() -> None:
+    pandas_prompt_builder = load_component("langflow_components/main_flow/16_pandas_prompt_builder.py")
+    payload = {
+        "request": {"question": "지금 WB에서 재공이 가장 많은 제품 기준으로 LOT의 IN TAT를 보고, IN TAT가 가장 오래된 LOT을 찾아줘"},
+        "intent_plan": {
+            "analysis_kind": "custom_wip_lot_sequence",
+            "product_grain": ["MODE"],
+            "retrieval_jobs": [
+                {"dataset_key": "wip_today", "source_alias": "wip_data"},
+                {"dataset_key": "lot_status", "source_alias": "lot_data"},
+            ],
+            "step_plan": [
+                {"operation": "rank_top_n", "source_alias": "wip_data", "metric": "WIP", "group_by": ["MODE"], "top_n": 1},
+                {"operation": "rank_top_n", "source_alias": "lot_data", "metric": "IN_TAT", "rank_order": "desc", "top_n": 1},
+            ],
+        },
+        "runtime_sources": {"wip_data": [], "lot_data": []},
+    }
+
+    prompt = pandas_prompt_builder.build_pandas_prompt_payload(payload)["prompt"]
+
+    assert "sequential multi-source analysis" in prompt
+    assert "IN_TAT" in prompt
+    assert "Return an empty DataFrame with no rows" not in prompt
+
+
+def test_pandas_executor_falls_back_when_llm_returns_empty_contract_for_wip_lot_sequence() -> None:
+    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
+    product_grain = ["TECH", "DEN", "MODE", "PKG_TYPE1", "PKG_TYPE2", "LEAD", "MCP_NO"]
+    payload = {
+        "intent_plan": {
+            "analysis_kind": "custom_wip_lot_sequence",
+            "product_grain": product_grain,
+            "retrieval_jobs": [
+                {"dataset_key": "wip_today", "source_alias": "wip_data"},
+                {"dataset_key": "lot_status", "source_alias": "lot_data"},
+            ],
+            "step_plan": [
+                {"operation": "rank_top_n", "source_alias": "wip_data", "metric": "WIP", "group_by": product_grain, "top_n": 1},
+                {
+                    "operation": "rank_top_n",
+                    "source_alias": "lot_data",
+                    "metric": "IN_TAT",
+                    "rank_order": "desc",
+                    "top_n": 1,
+                    "filter_from_step": "top_wip_product",
+                },
+            ],
+        },
+        "state": {},
+        "runtime_sources": {
+            "wip_data": [
+                {"TECH": "WB", "DEN": "512G", "MODE": "DDR5", "PKG_TYPE1": "FCBGA", "PKG_TYPE2": "AUTO", "LEAD": "LF", "MCP_NO": "A", "WIP": 40},
+                {"TECH": "WB", "DEN": "1024G", "MODE": "DDR5", "PKG_TYPE1": "FCBGA", "PKG_TYPE2": "SERVER", "LEAD": "LF", "MCP_NO": "B", "WIP": 90},
+            ],
+            "lot_data": [
+                {"TECH": "WB", "DEN": "512G", "MODE": "DDR5", "PKG_TYPE1": "FCBGA", "PKG_TYPE2": "AUTO", "LEAD": "LF", "MCP_NO": "A", "LOT_ID": "LOT-A1", "IN_TAT": 200},
+                {"TECH": "WB", "DEN": "1024G", "MODE": "DDR5", "PKG_TYPE1": "FCBGA", "PKG_TYPE2": "SERVER", "LEAD": "LF", "MCP_NO": "B", "LOT_ID": "LOT-B1", "IN_TAT": 100},
+                {"TECH": "WB", "DEN": "1024G", "MODE": "DDR5", "PKG_TYPE1": "FCBGA", "PKG_TYPE2": "SERVER", "LEAD": "LF", "MCP_NO": "B", "LOT_ID": "LOT-B2", "IN_TAT": 300},
+            ],
+        },
+    }
+    pandas_llm_json = {
+        "code": "result_df = pd.DataFrame(columns=['TECH', 'DEN', 'MODE', 'PKG_TYPE1', 'PKG_TYPE2', 'LEAD', 'MCP_NO', 'WIP', 'LOT_ID', 'IN_TAT'])",
+        "output_columns": [*product_grain, "WIP", "LOT_ID", "IN_TAT"],
+        "reasoning_steps": ["No data processing is performed because the instruction explicitly requests an empty result."],
+    }
+
+    result = pandas_executor.execute_pandas_from_llm(payload, json.dumps(pandas_llm_json, ensure_ascii=False))
+
+    assert result["analysis"]["status"] == "ok"
+    assert result["analysis"]["row_count"] == 1
+    assert result["analysis"]["columns"] == [*product_grain, "WIP", "LOT_ID", "IN_TAT"]
+    assert result["analysis"]["rows"][0]["MCP_NO"] == "B"
+    assert result["analysis"]["rows"][0]["WIP"] == 90
+    assert result["analysis"]["rows"][0]["LOT_ID"] == "LOT-B2"
+    assert result["analysis"]["rows"][0]["IN_TAT"] == 300
+    assert "executor_fallback" in result["analysis"]["analysis_code"]
+
+
 def test_pandas_executor_rewrites_pd_inf_for_pandas_compatibility() -> None:
     pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
     payload = {

@@ -152,7 +152,40 @@ def _analysis_instruction(plan: dict[str, Any]) -> str:
             "The final result_df columns must be exactly ['EQP_MODEL', 'EQP_COUNT', 'PRESS_CNT']; "
             "do not rename PRESS_CNT to TOTAL_PRESS_CNT and do not omit EQP_COUNT."
         )
-    return "Return an empty DataFrame with no rows."
+    if _is_top_wip_product_oldest_lot_plan(plan):
+        return (
+            "This is a sequential multi-source analysis. First aggregate WIP from the WIP source by product_grain "
+            f"{product_keys}, sort WIP descending, and keep the top product. Then filter lot_status rows to that "
+            "same product key, sort IN_TAT descending, and keep the top 1 oldest LOT. Return product_grain plus "
+            "['WIP', 'LOT_ID', 'IN_TAT']. Do not return an empty contract DataFrame unless the actual source rows "
+            "are empty after performing these steps."
+        )
+    return (
+        "Use the normalized intent plan and step_plan to perform the requested pandas analysis over the provided "
+        "source DataFrames. Do not create an empty contract DataFrame unless the real source rows are empty after "
+        "applying the plan."
+    )
+
+
+def _is_top_wip_product_oldest_lot_plan(plan: dict[str, Any]) -> bool:
+    kind = str(plan.get("analysis_kind") or "").lower()
+    if kind in {
+        "top_wip_product_oldest_lot",
+        "wip_top_product_oldest_lot",
+        "top_wip_product_lot_in_tat",
+        "oldest_lot_for_top_wip_product",
+    }:
+        return True
+    jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
+    has_wip = any(_job_matches_dataset(job, "wip") for job in jobs if isinstance(job, dict))
+    has_lot = any(_job_matches_dataset(job, "lot") for job in jobs if isinstance(job, dict))
+    step_text = json.dumps(plan.get("step_plan") or [], ensure_ascii=False).lower()
+    return has_wip and has_lot and "in_tat" in step_text and "wip" in step_text
+
+
+def _job_matches_dataset(job: dict[str, Any], token: str) -> bool:
+    text = " ".join(str(job.get(key) or "") for key in ("dataset_key", "source_alias", "purpose")).lower()
+    return token in text
 
 
 def _source_summary(runtime_sources: dict[str, Any]) -> dict[str, Any]:

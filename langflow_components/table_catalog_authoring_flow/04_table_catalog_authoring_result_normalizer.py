@@ -10,11 +10,29 @@ from lfx.io import DataInput, MessageTextInput, Output
 from lfx.schema.data import Data
 
 
+STANDARD_ALIAS_KEYS = {
+    "DATE",
+    "OPER_NAME",
+    "OPER_NUM",
+    "MODE",
+    "TECH",
+    "DEN",
+    "PKG_TYPE1",
+    "PKG_TYPE2",
+    "LEAD",
+    "MCP_NO",
+    "DEVICE_DESC",
+    "TSV_DIE_TYP",
+    "EQP_ID",
+    "EQP_MODEL",
+    "RECIPE_ID",
+}
+
 SOURCE_REQUIRED_FIELDS = {
     "oracle": ["db_key", "query_template"],
     "h_api": ["api_url"],
     "datalake": ["query_template"],
-    "goodocs": ["doc_id", "sheet_name"],
+    "goodocs": ["doc_id"],
 }
 
 
@@ -94,16 +112,25 @@ def _source_text(payload: dict[str, Any]) -> str:
 def _backfill_dataset_key(dataset_key: str, source_text: str, raw_item_count: int) -> str:
     if raw_item_count != 1:
         return dataset_key
-    candidates = _unique_text(
-        re.findall(r"\b([A-Za-z][A-Za-z0-9_]*)\s*로\s*등록", source_text)
-        + re.findall(r"데이터는\s*([A-Za-z][A-Za-z0-9_]*)\s*로", source_text)
-    )
+    candidates = _dataset_key_candidates_from_text(source_text)
     if len(candidates) != 1:
         return dataset_key
     candidate = candidates[0]
     if not dataset_key or dataset_key.endswith("_detailed") or dataset_key not in source_text:
         return candidate
     return dataset_key
+
+
+def _dataset_key_candidates_from_text(text: str) -> list[str]:
+    patterns = [
+        r"\b([A-Za-z][A-Za-z0-9_]*)\s*(?:로|으로)\s*등록",
+        r"데이터는\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:로|으로)",
+        r"\bdataset(?:_key)?\s*(?:는|:|=)\s*[\"']?([A-Za-z][A-Za-z0-9_]*)",
+    ]
+    candidates: list[str] = []
+    for pattern in patterns:
+        candidates.extend(re.findall(pattern, text, flags=re.IGNORECASE))
+    return _unique_text(candidates)
 
 
 def _backfill_structured_fields(payload: dict[str, Any], source_text: str) -> None:
@@ -114,27 +141,43 @@ def _backfill_structured_fields(payload: dict[str, Any], source_text: str) -> No
     if source_type and not _clean(payload.get("source_type")):
         payload["source_type"] = source_type
         source_config["source_type"] = source_type
+    elif source_type:
+        source_config.setdefault("source_type", source_type)
     db_key = _db_key_from_text(source_text)
     if db_key and not _clean(source_config.get("db_key")):
         source_config["db_key"] = db_key
     query_template = _query_template_from_text(source_text)
     if query_template and not _clean(source_config.get("query_template")):
         source_config["query_template"] = query_template
+    doc_id = _goodocs_doc_id_from_text(source_text)
+    if doc_id and not _clean(source_config.get("doc_id")):
+        source_config["doc_id"] = doc_id
+    if _clean(source_config.get("document_id")) and not _clean(source_config.get("doc_id")):
+        source_config["doc_id"] = _clean(source_config.get("document_id"))
     payload["source_config"] = source_config
 
     query_columns = _columns_from_query(_clean(source_config.get("query_template")))
     existing_columns = _as_text_list(payload.get("columns"))
     if query_columns and len(existing_columns) < len(query_columns):
         payload["columns"] = query_columns
+    text_columns = _columns_from_text_list(source_text)
+    if text_columns and len(_as_text_list(payload.get("columns"))) < len(text_columns):
+        payload["columns"] = text_columns
 
     mappings_from_text = _filter_mappings_from_text(source_text)
     if mappings_from_text:
         payload["filter_mappings"] = _merge_mapping(payload.get("filter_mappings"), mappings_from_text)
-        if "DATE" in mappings_from_text:
+        if "DATE" in mappings_from_text and not _declares_no_required_params(source_text):
             payload["required_param_mappings"] = _merge_mapping(payload.get("required_param_mappings"), {"DATE": mappings_from_text["DATE"]})
             required_params = _as_text_list(payload.get("required_params"))
             if "DATE" not in required_params:
                 payload["required_params"] = [*required_params, "DATE"]
+    aliases_from_text = _standard_column_aliases_from_text(source_text)
+    aliases_from_mappings = _standard_column_aliases_from_filter_mappings(mappings_from_text)
+    if aliases_from_mappings:
+        aliases_from_text = _merge_mapping(aliases_from_text, aliases_from_mappings)
+    if aliases_from_text:
+        payload["standard_column_aliases"] = _merge_mapping(payload.get("standard_column_aliases"), aliases_from_text)
 
     date_format = _date_format_from_text(source_text)
     if date_format and not _clean(payload.get("date_format")):
@@ -142,6 +185,9 @@ def _backfill_structured_fields(payload: dict[str, Any], source_text: str) -> No
     quantity_column = _quantity_column_from_text(source_text)
     if quantity_column and not _clean(payload.get("primary_quantity_column")):
         payload["primary_quantity_column"] = quantity_column
+    if _declares_no_required_params(source_text):
+        payload["required_params"] = []
+        payload["required_param_mappings"] = {}
 
 
 def _source_type_from_text(text: str) -> str:
@@ -155,6 +201,20 @@ def _source_type_from_text(text: str) -> str:
 def _db_key_from_text(text: str) -> str:
     match = re.search(r"\bdb_key\s*(?:는|:|=)\s*([A-Za-z0-9_.-]+)", text, flags=re.IGNORECASE)
     return _clean(match.group(1)) if match else ""
+
+
+def _goodocs_doc_id_from_text(text: str) -> str:
+    patterns = [
+        r"\bdoc_id\s*(?:는|:|=)\s*[\"']?([A-Za-z0-9_.-]+)",
+        r"\bdocument_id\s*(?:는|:|=)\s*[\"']?([A-Za-z0-9_.-]+)",
+        r"Goodocs\s*문서\s*ID\s*(?:는|:|=)\s*[\"']?([A-Za-z0-9_.-]+)",
+        r"문서\s*ID\s*(?:는|:|=)\s*[\"']?([A-Za-z0-9_.-]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return _clean(match.group(1)).strip("\"'.")
+    return ""
 
 
 def _query_template_from_text(text: str) -> str:
@@ -219,10 +279,48 @@ def _column_name_from_select_expr(expr: str) -> str:
 
 
 def _filter_mappings_from_text(text: str) -> dict[str, list[str]]:
-    match = re.search(r"filter_mappings\s*(?:는|:)?\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL)
+    return _named_mappings_from_text(text, "filter_mappings")
+
+
+def _standard_column_aliases_from_text(text: str) -> dict[str, list[str]]:
+    return _merge_mapping(_named_mappings_from_text(text, "standard_column_aliases"), _standard_quantity_aliases_from_text(text))
+
+
+def _standard_column_aliases_from_filter_mappings(mappings: dict[str, list[str]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for key, values in mappings.items():
+        standard_key = _clean(key).upper()
+        if standard_key not in STANDARD_ALIAS_KEYS:
+            continue
+        physical_values = [value for value in values if _clean(value) != _clean(key)]
+        if physical_values:
+            result[standard_key] = _unique_text(physical_values)
+    return result
+
+
+def _standard_quantity_aliases_from_text(text: str) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    if re.search(r"INPUT계획[^\n.。]*INPUT_PLAN|INPUT_PLAN[^\n.。]*INPUT계획", text, flags=re.IGNORECASE):
+        result["INPUT_PLAN"] = ["INPUT계획"]
+    if re.search(r"OUT계획[^\n.。]*(?:OUT_PLAN|TARGET)|(?:OUT_PLAN|TARGET)[^\n.。]*OUT계획", text, flags=re.IGNORECASE):
+        aliases = ["OUT계획"]
+        if re.search(r"OUT계획[^\n.。]*TARGET|TARGET[^\n.。]*OUT계획", text, flags=re.IGNORECASE):
+            aliases.append("TARGET")
+        result["OUT_PLAN"] = aliases
+    return result
+
+
+def _named_mappings_from_text(text: str, field_name: str) -> dict[str, list[str]]:
+    match = re.search(rf"{re.escape(field_name)}\s*(?:는|:)?\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL)
     if not match:
         return {}
     snippet = re.split(r"\n\s*\n", match.group(1), maxsplit=1)[0]
+    snippet = re.split(
+        r"\n\s*(?:filter_mappings|required_param_mappings|standard_column_aliases|default_detail_columns|columns)\b",
+        snippet,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
     result: dict[str, list[str]] = {}
     for item in re.finditer(r"([A-Za-z][A-Za-z0-9_ ]*)\s*->\s*([^,\n]+)", snippet):
         key = _clean(item.group(1)).replace(" ", "_")
@@ -247,11 +345,43 @@ def _date_format_from_text(text: str) -> str:
     return ""
 
 
-def _quantity_column_from_text(text: str) -> str:
+def _quantity_column_from_text(text: str) -> Any:
+    if "계획 수량" in text and "INPUT계획" in text and "OUT계획" in text:
+        return ["INPUT_PLAN", "OUT_PLAN"]
+    if "기본 목표 수량" in text and "OUT계획" in text:
+        return "OUT_PLAN"
     match = re.search(r"(?:수량|quantity).*?([A-Z][A-Z0-9_]+)\s*컬럼", text, flags=re.IGNORECASE)
     if match:
         return _clean(match.group(1)).upper()
     return ""
+
+
+def _columns_from_text_list(text: str) -> list[str]:
+    patterns = [
+        r"(?:문서|데이터|테이블)[^\n]*?에는\s*([^\n]+?)\s*(?:항목|컬럼)",
+        r"\bcolumns\s*(?:는|:)\s*([^\n]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        values = [part.strip(" .。;") for part in match.group(1).split(",")]
+        columns = _unique_text(values)
+        if columns:
+            return columns
+    return []
+
+
+def _declares_no_required_params(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text)
+    patterns = [
+        "필수조회파라미터는없",
+        "필수조회파라미터가없",
+        "별도필수조회파라미터는없",
+        "requiredparams없",
+        "required_params없",
+    ]
+    return any(pattern.lower() in compact.lower() for pattern in patterns)
 
 
 def _merge_mapping(base: Any, incoming: dict[str, list[str]]) -> dict[str, list[str]]:

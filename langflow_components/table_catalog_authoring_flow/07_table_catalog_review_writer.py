@@ -68,6 +68,8 @@ def _normalize_review(text: str, payload: dict[str, Any], action: str = "ask") -
             continue
         if _is_optional_default_detail_columns_request(item, payload):
             continue
+        if _is_optional_goodocs_source_request(item, payload):
+            continue
         supplement.append(item)
     if _duplicate_choice_required(payload) and action == "ask":
         supplement.append(
@@ -230,6 +232,39 @@ def _is_optional_default_detail_columns_request(item: Any, payload: dict[str, An
         if not isinstance(columns, list) or not columns:
             return False
     return True
+
+
+def _is_optional_goodocs_source_request(item: Any, payload: dict[str, Any]) -> bool:
+    if not _single_goodocs_item_has_doc_id(payload):
+        return False
+    if isinstance(item, dict):
+        field = _clean(item.get("field")).lower()
+        text = " ".join(_clean(item.get(key)) for key in ("field", "reason", "example_user_input")).lower()
+    else:
+        field = ""
+        text = _clean(item).lower()
+    optional_fields = {
+        "sheet_name",
+        "source_config.sheet_name",
+        "db_key",
+        "source_config.db_key",
+        "query_template",
+        "source_config.query_template",
+    }
+    if field in optional_fields:
+        return True
+    return any(token in text for token in optional_fields)
+
+
+def _single_goodocs_item_has_doc_id(payload: dict[str, Any]) -> bool:
+    items = [item for item in _as_list(payload.get("items")) if isinstance(item, dict)]
+    if len(items) != 1:
+        return False
+    table_payload = items[0].get("payload") if isinstance(items[0].get("payload"), dict) else {}
+    source_config = table_payload.get("source_config") if isinstance(table_payload.get("source_config"), dict) else {}
+    source_type = _clean(table_payload.get("source_type") or source_config.get("source_type")).lower()
+    doc_id = _clean(source_config.get("doc_id") or source_config.get("document_id"))
+    return source_type in {"goodocs", "goodoc"} and bool(doc_id)
 
 
 def _normalize_item_reviews(item_reviews: list[Any], ready_to_save: bool) -> list[Any]:

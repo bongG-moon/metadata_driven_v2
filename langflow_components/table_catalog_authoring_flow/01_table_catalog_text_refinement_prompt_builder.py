@@ -18,6 +18,8 @@ def build_table_catalog_refinement_prompt_payload(payload_value: Any) -> dict[st
             "Do not invent dataset keys, source systems, SQL, API URLs, document IDs, sheet names, or physical column names.",
             "Preserve literal structured information in refined_text: dataset_key, source_type, db_key, query_template blocks, SELECT columns, filter_mappings, required params, date_format, and quantity columns.",
             "If the user pasted SQL or mappings, copy them verbatim or near-verbatim instead of summarizing them away.",
+            "For Goodocs sources, document ID/doc_id is the retrieval identifier. sheet_name is optional and must not be requested unless the user says a specific sheet/tab is required.",
+            "If the user says there are no required query parameters, preserve that exactly; DATE filter_mappings can still exist as optional filters.",
             "If retrieval essentials are missing, explain them in Korean in missing_information.",
             "",
             "Supported source_type values:",
