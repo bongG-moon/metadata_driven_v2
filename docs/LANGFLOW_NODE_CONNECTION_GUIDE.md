@@ -20,14 +20,6 @@
 | Table catalog authoring | `langflow_components/table_catalog_authoring_flow/CONNECTION_GUIDE.md` |
 | Main flow filter authoring | `langflow_components/main_flow_filters_authoring_flow/CONNECTION_GUIDE.md` |
 
-## Compatibility Flow
-
-| Flow | Detailed guide |
-| --- | --- |
-| Combined main flow | `langflow_components/main_flow/CONNECTION_GUIDE.md` |
-
-`main_flow`는 기존 단일 canvas 배포를 위한 호환용입니다. 신규 구현은 `router_flow -> selected subflow` 구조를 기준으로 연결하는 것이 좋습니다.
-
 ## Common Rules
 
 - 실제 reasoning과 JSON 생성은 Langflow의 Gemini/LLM 노드가 담당합니다.

@@ -100,18 +100,27 @@ def _normalize_analysis_recipe_payload(payload: dict[str, Any]) -> None:
         "metric_terms",
         "question_cues",
         "forbidden_question_cues",
+        "override_analysis_kinds",
+        "blocked_filter_fields",
     ):
         if payload.get(key) is not None:
             payload[key] = _as_text_list(payload.get(key))
-    for key in ("source_aliases_by_family", "dataset_role_by_family", "defaults"):
+    for key in ("source_aliases_by_family", "dataset_role_by_family", "defaults", "required_columns_by_family"):
         if not isinstance(payload.get(key, {}), dict):
             payload[key] = {}
+    for key in ("replace_datasets", "replace_retrieval_jobs", "override_step_plan", "force_analysis_kind"):
+        if payload.get(key) is not None:
+            payload[key] = bool(payload.get(key))
+    if payload.get("step_plan_template") is not None and not isinstance(payload.get("step_plan_template"), list):
+        payload["step_plan_template"] = []
     if payload.get("intent_type") is not None:
         payload["intent_type"] = _clean(payload.get("intent_type"))
     if payload.get("default_analysis_kind") is not None:
         payload["default_analysis_kind"] = _clean(payload.get("default_analysis_kind"))
     if payload.get("grain_policy") is not None:
         payload["grain_policy"] = _clean(payload.get("grain_policy"))
+    if payload.get("top_n_policy") is not None:
+        payload["top_n_policy"] = _clean(payload.get("top_n_policy"))
 
 
 def _normalize_condition_overrides(payload: dict[str, Any], errors: list[str], key: str) -> None:

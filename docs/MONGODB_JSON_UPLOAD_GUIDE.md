@@ -99,6 +99,6 @@ metadata collection 3개와 result store collection은 목적이 다릅니다.
 - payload에는 preview rows와 MongoDB `data_ref`만 남깁니다.
 - 후속 계획에는 `state.current_data.product_key_values`와 preview rows를 우선 사용하고, 전체 rows는 “이전 결과 복원” 브랜치가 필요하다고 판단한 경우에만 복원합니다.
 
-즉 `upload_json_to_mongodb.py`는 metadata seed용이고, 실제 질의 결과 payload 절감은 Langflow main flow 안의 MongoDB result store 노드가 담당합니다.
+즉 `upload_json_to_mongodb.py`는 metadata seed용이고, 실제 질의 결과 payload 절감은 `data_analysis_flow` 안의 MongoDB result store 노드가 담당합니다.
 
 

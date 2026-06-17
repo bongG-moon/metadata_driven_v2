@@ -25,7 +25,7 @@ The recommended production shape is now a backend-orchestrated split flow:
 
 1. `router_flow/` classifies the user request and returns `selected_flow`.
 2. Backend orchestrator calls one of `metadata_qa_flow/`, `data_analysis_flow/`, `report_generation_flow/`, or `operations_diagnosis_flow/`.
-3. `main_flow/` remains as a combined compatibility canvas while existing Langflow deployments are migrated.
+3. The old combined `main_flow/` canvas has been removed; new wiring should use the split flows directly.
 
 This keeps metadata/help/catalog questions out of the heavy data-analysis path and makes future request types additive.
 
@@ -43,7 +43,6 @@ This keeps metadata/help/catalog questions out of the heavy data-analysis path a
 
 Detailed wiring guides now live with each flow folder:
 
-- `main_flow/CONNECTION_GUIDE.md`
 - `router_flow/CONNECTION_GUIDE.md`
 - `metadata_qa_flow/CONNECTION_GUIDE.md`
 - `data_analysis_flow/CONNECTION_GUIDE.md`
@@ -53,22 +52,21 @@ Detailed wiring guides now live with each flow folder:
 - `table_catalog_authoring_flow/CONNECTION_GUIDE.md`
 - `main_flow_filters_authoring_flow/CONNECTION_GUIDE.md`
 
-## Combined Main Flow LLM Node Pattern
+## Split Runtime LLM Node Pattern
 
-The sequence below applies to the compatibility `main_flow/` canvas. For new runtime wiring, start with `router_flow/` and then call the selected subflow.
+Start with `router_flow/`, then call the selected subflow. Data-analysis questions use `data_analysis_flow/`.
 
 Use Langflow's Gemini/LLM nodes for the actual reasoning calls:
 
-1. `03 Route Candidate Builder.payload_out -> 04 Route Classifier Prompt Builder`; call a small Gemini/LLM route classifier only when `route_llm_required=true`.
-2. `03 Route Candidate Builder.payload_out` plus optional route LLM text -> `05 Route Classifier Normalizer -> 06 Metadata QA Response Builder`.
-3. `07 Intent Prompt Builder.intent_prompt -> Gemini/LLM -> 08 Intent Plan Normalizer.llm_response`
-4. `09~14` main_flow retriever nodes -> `15 Retrieval Payload Adapter.payload`
-5. `15 Retrieval Payload Adapter.payload -> 16 Pandas Prompt Builder` and `17 Pandas Code Executor`
-6. `16 Pandas Prompt Builder.pandas_prompt -> Gemini/LLM -> 17 Pandas Code Executor.llm_response`
-7. `17 Pandas Code Executor.payload_out -> 18 MongoDB Data Store.payload`
-8. `18 MongoDB Data Store.payload_out -> 19 Answer Prompt Builder.payload` and `20 Answer Response Builder.payload`
-9. `19 Answer Prompt Builder.answer_prompt -> Gemini/LLM -> 20 Answer Response Builder.llm_response`
-10. `20 Answer Response Builder.payload_out -> 21 Answer Message Adapter.message -> Chat Output`
+1. `router_flow/02 Route Candidate Builder -> 03 Route Classifier Prompt Builder`; call a small Gemini/LLM route classifier only when `route_llm_required=true`.
+2. `router_flow/04 Route Classifier Normalizer -> 05 Orchestrator Response Builder`.
+3. For metadata questions, call `metadata_qa_flow/`.
+4. For analysis questions, call `data_analysis_flow/02 Intent Prompt Builder -> Gemini/LLM -> 03 Intent Plan Normalizer`.
+5. `data_analysis_flow/07~12` retriever/merger nodes -> `13 Retrieval Payload Adapter`.
+6. `14 Pandas Prompt Builder -> Gemini/LLM -> 15 Pandas Code Executor`.
+7. Optional pandas repair branch: `16 Pandas Repair Prompt Builder -> Gemini/LLM -> second 15 Pandas Code Executor`.
+8. Final pandas payload -> `17 MongoDB Data Store -> 18 Answer Prompt Builder -> Gemini/LLM -> 19 Answer Response Builder`.
+9. `19 Answer Response Builder.payload_out -> 20 Answer Message Adapter.message -> Chat Output`.
 
 The final adapter formats one playground-friendly Markdown message from the existing final payload.
 It includes the answer, result table, intent summary, retrieval/step plan summary, pandas execution

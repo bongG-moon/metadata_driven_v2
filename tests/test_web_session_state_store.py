@@ -56,11 +56,13 @@ def install_fake_pymongo(monkeypatch: Any, collection: FakeCollection) -> None:
 def test_langflow_client_loads_and_saves_mongodb_session_state(monkeypatch: Any) -> None:
     collection = FakeCollection()
     install_fake_pymongo(monkeypatch, collection)
-    calls: list[dict[str, Any] | None] = []
+    calls: list[dict[str, Any]] = []
 
     def fake_call_langflow_api(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        calls.append(kwargs.get("tweaks"))
-        if len(calls) == 1:
+        calls.append({"url": args[0], "tweaks": kwargs.get("tweaks")})
+        if args[0] == "http://fake-router":
+            return {"status": "ok", "route": "data_analysis", "selected_flow": "data_analysis_flow", "flow_inputs": {}}
+        if len([call for call in calls if call["url"] == "http://fake-data"]) == 1:
             return {
                 "status": "ok",
                 "answer_message": "first",
@@ -90,7 +92,8 @@ def test_langflow_client_loads_and_saves_mongodb_session_state(monkeypatch: Any)
 
     monkeypatch.setattr(langflow_client, "call_langflow_api", fake_call_langflow_api)
     settings = LangflowSettings(
-        main_api_url="http://fake-main",
+        router_api_url="http://fake-router",
+        data_analysis_api_url="http://fake-data",
         session_store="mongodb",
         mongo_uri="mongodb://fake",
         mongo_database="metadata_driven_agent_v2",
@@ -103,11 +106,11 @@ def test_langflow_client_loads_and_saves_mongodb_session_state(monkeypatch: Any)
     stored_state = collection.docs["session_state:session-1"]["state"]
     second = client.run_query("second question", "session-1")
 
-    assert calls[0] is None
+    assert calls[0]["tweaks"] == {"00 Router Request Loader": {"session_id": "session-1"}}
     assert first["session_state_store"]["write"]["saved"] is True
     assert stored_state["current_data"]["rows"] == [{"MODE": "A", "WIP": 1}, {"MODE": "B", "WIP": 2}]
     assert stored_state["current_data"]["data_ref"]["ref_id"] == "result-ref"
-    assert calls[1]["00 Request State Loader"]["state"]["current_data"]["data_ref"]["ref_id"] == "result-ref"
+    assert calls[3]["tweaks"]["00 Analysis Request Loader"]["state"]["current_data"]["data_ref"]["ref_id"] == "result-ref"
     assert second["session_state_store"]["load"]["loaded"] is True
 
 
@@ -119,15 +122,18 @@ def test_langflow_client_prefers_explicit_state_over_session_store(monkeypatch: 
         "state": {"current_data": {"rows": [{"MODE": "OLD"}], "row_count": 1}},
     }
     install_fake_pymongo(monkeypatch, collection)
-    calls: list[dict[str, Any] | None] = []
+    calls: list[dict[str, Any]] = []
 
     def fake_call_langflow_api(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        calls.append(kwargs.get("tweaks"))
+        calls.append({"url": args[0], "tweaks": kwargs.get("tweaks")})
+        if args[0] == "http://fake-router":
+            return {"status": "ok", "route": "data_analysis", "selected_flow": "data_analysis_flow", "flow_inputs": {}}
         return {"status": "ok", "answer_message": "ok", "state": {"current_data": {"row_count": 0}}}
 
     monkeypatch.setattr(langflow_client, "call_langflow_api", fake_call_langflow_api)
     settings = LangflowSettings(
-        main_api_url="http://fake-main",
+        router_api_url="http://fake-router",
+        data_analysis_api_url="http://fake-data",
         session_store="mongodb",
         mongo_uri="mongodb://fake",
     )
@@ -135,4 +141,4 @@ def test_langflow_client_prefers_explicit_state_over_session_store(monkeypatch: 
 
     client.run_query("question", "session-1", state={"current_data": {"rows": [{"MODE": "NEW"}], "row_count": 1}})
 
-    assert calls[0]["00 Request State Loader"]["state"]["current_data"]["rows"] == [{"MODE": "NEW"}]
+    assert calls[1]["tweaks"]["00 Analysis Request Loader"]["state"]["current_data"]["rows"] == [{"MODE": "NEW"}]

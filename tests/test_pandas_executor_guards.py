@@ -18,7 +18,7 @@ def load_component(path: str):
 
 
 def test_pandas_executor_drops_redundant_source_alias_columns_before_llm_code_runs() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "low_output_vs_target",
@@ -86,7 +86,7 @@ def test_pandas_executor_drops_redundant_source_alias_columns_before_llm_code_ru
 
 
 def test_pandas_executor_normalizes_lot_process_column_alias() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py")
     payload = {
         "intent_plan": {"analysis_kind": "lot_count_by_process"},
         "state": {},
@@ -105,8 +105,65 @@ def test_pandas_executor_normalizes_lot_process_column_alias() -> None:
     assert result["analysis"]["rows"][0]["OPER_SHORT_DESC"] == "D/A1"
 
 
+def test_pandas_executor_replaces_incomplete_top_wip_process_lot_metrics_result() -> None:
+    pandas_executor = load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py")
+    payload = {
+        "intent_plan": {
+            "analysis_kind": "top_wip_process_hold_lot_in_tat",
+            "top_n": 3,
+            "analysis_output_columns": ["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"],
+            "retrieval_jobs": [
+                {"dataset_key": "wip_today", "source_alias": "wip_data"},
+                {"dataset_key": "lot_status", "source_alias": "lot_status_data"},
+            ],
+            "step_plan": [
+                {"operation": "rank_top_n", "source_alias": "wip_data", "metric": "WIP", "group_by": ["OPER_NAME"], "top_n": 3},
+                {"operation": "hold_lot_in_tat_by_process", "source_alias": "lot_status_data"},
+            ],
+        },
+        "state": {},
+        "runtime_sources": {
+            "wip_data": [
+                {"OPER_NAME": "D/A1", "WIP": 100},
+                {"OPER_NAME": "D/A2", "WIP": 80},
+                {"OPER_NAME": "D/A3", "WIP": 150},
+                {"OPER_NAME": "D/A4", "WIP": 10},
+            ],
+            "lot_status_data": [
+                {"OPER_SHORT_DESC": "D/A3", "LOT_ID": "L31", "LOT_HOLD_STAT_CD": "HOLD", "IN_TAT": 10},
+                {"OPER_SHORT_DESC": "D/A3", "LOT_ID": "L32", "LOT_HOLD_STAT_CD": "NotOnHold", "IN_TAT": 20},
+                {"OPER_SHORT_DESC": "D/A1", "LOT_ID": "L11", "LOT_HOLD_STAT_CD": "NotOnHold", "IN_TAT": 5},
+                {"OPER_SHORT_DESC": "D/A1", "LOT_ID": "L12", "LOT_HOLD_STAT_CD": "HOLD", "IN_TAT": 15},
+                {"OPER_SHORT_DESC": "D/A2", "LOT_ID": "L21", "LOT_HOLD_STAT_CD": "OnHold", "IN_TAT": 40},
+                {"OPER_SHORT_DESC": "D/A2", "LOT_ID": "L22", "LOT_HOLD_STAT_CD": "NotOnHold", "IN_TAT": 20},
+            ],
+        },
+    }
+    pandas_llm_json = {
+        "code": "\n".join(
+            [
+                "filtered_df = sources['lot_status_data']",
+                "result_df = filtered_df.groupby('OPER_SHORT_DESC')['LOT_ID'].nunique().reset_index(name='LOT_COUNT')",
+            ]
+        ),
+        "output_columns": ["OPER_SHORT_DESC", "LOT_COUNT"],
+        "reasoning_steps": ["Only count lots by process."],
+    }
+
+    result = pandas_executor.execute_pandas_from_llm(payload, json.dumps(pandas_llm_json, ensure_ascii=False))
+
+    assert result["analysis"]["status"] == "ok"
+    assert result["analysis"]["columns"] == ["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]
+    assert result["analysis"]["rows"] == [
+        {"OPER_SHORT_DESC": "D/A3", "WIP": 150, "HOLD_LOT_COUNT": 1, "AVG_IN_TAT": 15.0},
+        {"OPER_SHORT_DESC": "D/A1", "WIP": 100, "HOLD_LOT_COUNT": 1, "AVG_IN_TAT": 10.0},
+        {"OPER_SHORT_DESC": "D/A2", "WIP": 80, "HOLD_LOT_COUNT": 1, "AVG_IN_TAT": 30.0},
+    ]
+    assert "missed required plan output columns" in result["analysis"]["analysis_code"]
+
+
 def test_pandas_executor_adds_missing_required_detail_columns() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "detail_rows",
@@ -140,7 +197,7 @@ def test_pandas_executor_adds_missing_required_detail_columns() -> None:
 
 
 def test_pandas_executor_derives_rank_group_from_oper_name() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "rank_wip_then_join_production",
@@ -163,7 +220,7 @@ def test_pandas_executor_derives_rank_group_from_oper_name() -> None:
 
 
 def test_pandas_executor_falls_back_for_lot_quantity_summary_to_frame_error() -> None:
-    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
+    pandas_executor = load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py")
     payload = {
         "intent_plan": {
             "analysis_kind": "lot_quantity_summary",
@@ -229,7 +286,7 @@ def test_pandas_executor_falls_back_for_previous_source_aggregation() -> None:
     }
 
     for executor_path in [
-        "langflow_components/main_flow/17_pandas_code_executor.py",
+        "langflow_components/data_analysis_flow/15_pandas_code_executor.py",
         "langflow_components/data_analysis_flow/15_pandas_code_executor.py",
     ]:
         pandas_executor = load_component(executor_path)

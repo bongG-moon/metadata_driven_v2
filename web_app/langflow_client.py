@@ -20,7 +20,6 @@ DEFAULT_COLLECTIONS = {
 @dataclass(frozen=True)
 class LangflowSettings:
     api_key: str = ""
-    main_api_url: str = ""
     router_api_url: str = ""
     data_analysis_api_url: str = ""
     metadata_qa_api_url: str = ""
@@ -46,7 +45,6 @@ class LangflowSettings:
         session_store = _env("WEB_SESSION_STORE") or ("mongodb" if mongo_uri else "disabled")
         return cls(
             api_key=_env("LANGFLOW_API_KEY"),
-            main_api_url=_env("LANGFLOW_MAIN_API_URL") or _env("LANGFLOW_API_URL") or _flow_run_url(base_url, _env("LANGFLOW_MAIN_FLOW_ID")),
             router_api_url=_env("LANGFLOW_ROUTER_API_URL") or _flow_run_url(base_url, _env("LANGFLOW_ROUTER_FLOW_ID")),
             data_analysis_api_url=_env("LANGFLOW_DATA_ANALYSIS_API_URL") or _flow_run_url(base_url, _env("LANGFLOW_DATA_ANALYSIS_FLOW_ID")),
             metadata_qa_api_url=_env("LANGFLOW_METADATA_QA_API_URL") or _flow_run_url(base_url, _env("LANGFLOW_METADATA_QA_FLOW_ID")),
@@ -81,7 +79,7 @@ class LangflowSettings:
 
     def configured_summary(self) -> dict[str, bool]:
         return {
-            "main": bool(self.main_api_url or self.router_api_url),
+            "query": bool(self.router_api_url),
             "router": bool(self.router_api_url),
             "data_analysis": bool(self.data_analysis_api_url),
             "metadata_qa": bool(self.metadata_qa_api_url),
@@ -95,7 +93,7 @@ class LangflowSettings:
 
     def query_flow_url(self, selected_flow: str) -> str:
         return {
-            "data_analysis_flow": self.data_analysis_api_url or self.main_api_url,
+            "data_analysis_flow": self.data_analysis_api_url,
             "metadata_qa_flow": self.metadata_qa_api_url,
             "report_generation_flow": self.report_generation_api_url,
             "operations_diagnosis_flow": self.operations_diagnosis_api_url,
@@ -109,24 +107,9 @@ class LangflowApiClient:
 
     def run_query(self, question: str, session_id: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
         effective_state = state if state is not None else self._load_session_state(session_id)
-        if self.settings.router_api_url:
-            result = self.run_orchestrated_query(question, session_id, effective_state)
-            return self._attach_and_save_session_state(result, session_id, question)
-        if not self.settings.main_api_url:
-            raise ValueError("LANGFLOW_MAIN_API_URL 또는 LANGFLOW_MAIN_FLOW_ID가 설정되지 않았습니다.")
-        raw_response = call_langflow_api(
-            self.settings.main_api_url,
-            api_key=self.settings.api_key,
-            input_value=question,
-            session_id=session_id,
-            input_type=self.settings.input_type,
-            output_type=self.settings.output_type,
-            tweaks=build_main_flow_tweaks(effective_state, session_id),
-            timeout=self.settings.timeout,
-        )
-        result = normalize_query_response(raw_response)
-        result["api_mode"] = "langflow_api"
-        result["raw_response"] = raw_response
+        if not self.settings.router_api_url:
+            raise ValueError("LANGFLOW_ROUTER_API_URL or LANGFLOW_ROUTER_FLOW_ID is not configured.")
+        result = self.run_orchestrated_query(question, session_id, effective_state)
         return self._attach_and_save_session_state(result, session_id, question)
 
     def run_orchestrated_query(self, question: str, session_id: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -251,17 +234,6 @@ def _build_session_state_store(settings: LangflowSettings) -> MongoDBSessionStat
         history_limit=settings.session_state_history_limit,
     )
     return MongoDBSessionStateStore(store_settings)
-
-
-def build_main_flow_tweaks(state: dict[str, Any] | None, session_id: str) -> dict[str, Any] | None:
-    if not state:
-        return None
-    return {
-        "00 Request State Loader": {
-            "session_id": session_id,
-            "state": state,
-        }
-    }
 
 
 def build_router_flow_tweaks(state: dict[str, Any] | None, session_id: str) -> dict[str, Any] | None:

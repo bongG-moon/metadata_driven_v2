@@ -43,7 +43,7 @@
 21. `20_answer_response_builder.py`
 22. `21_answer_message_adapter.py`
 
-LLM 없이 동작하는 deterministic 예시는 `langflow_components/demo_flow/`에 따로 둔다. 운영 권장 canvas는 `langflow_components/main_flow/` 안의 main spine, metadata QA, source retrieval nodes를 함께 사용한다.
+LLM 없이 동작하는 deterministic 예시는 `langflow_components/demo_flow/`에 따로 둔다. 운영 권장 구조는 `router_flow/`가 질문 유형을 분류한 뒤 `metadata_qa_flow/`, `data_analysis_flow/`, `report_generation_flow/`, `operations_diagnosis_flow/` 중 필요한 flow를 backend orchestrator가 호출하는 split flow 방식이다.
 
 ## Retrieval Flow Choices
 
@@ -83,8 +83,9 @@ retrieval은 두 방식 중 하나를 쓴다.
 Langflow의 Gemini/LLM node는 세 위치에 둔다.
 
 - Intent planning: `07 Intent Prompt Builder -> Gemini/LLM -> 08 Intent Plan Normalizer`
-- Pandas code generation: `16 Pandas Prompt Builder -> Gemini/LLM -> 17 Pandas Code Executor`
-- Final answer writing: `19 Answer Prompt Builder -> Gemini/LLM -> 20 Answer Response Builder`
+- Pandas code generation: `14 Pandas Prompt Builder -> Gemini/LLM -> 15 Pandas Code Executor`
+- Pandas repair: `16 Pandas Repair Prompt Builder -> Gemini/LLM -> second 15 Pandas Code Executor`
+- Final answer writing: `18 Answer Prompt Builder -> Gemini/LLM -> 19 Answer Response Builder`
 
 LLM 출력은 그대로 신뢰하지 않는다. intent JSON은 normalizer에서 dataset key, source alias, params, filter scope를 metadata와 대조하고, pandas code JSON은 safety check를 통과한 뒤 in-memory DataFrame에만 실행한다.
 

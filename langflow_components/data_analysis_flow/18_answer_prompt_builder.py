@@ -56,10 +56,12 @@ def build_answer_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "Answer in Korean.",
             "Use only the provided result data and metadata context. Do not invent numbers.",
             "Be concise but include the applied conditions, datasets used, and any important caveat.",
+            "Do not include Markdown tables, tab-separated tables, plain text tables, or row-by-row result listings in answer_message.",
+            "The downstream Answer Message Adapter renders the result table deterministically from data.rows; answer_message must be narrative text only.",
             "If there are errors, explain what failed and what the user can retry.",
             "",
             "Return either plain Korean text or one strict JSON object with this schema:",
-            json.dumps({"answer_message": "Korean answer text"}, ensure_ascii=False, indent=2),
+            json.dumps({"answer_message": "Korean narrative answer text without result tables"}, ensure_ascii=False, indent=2),
             "",
             "Answer context:",
             json.dumps(answer_context, ensure_ascii=False, indent=2),
@@ -96,7 +98,7 @@ def _payload(value: Any) -> dict[str, Any]:
 
 
 class AnswerPromptBuilder(Component):
-    display_name = "19 Answer Prompt Builder"
+    display_name = "18 Answer Prompt Builder"
     description = "Builds the prompt that should be sent to the Langflow Gemini/LLM node for final answer writing."
     inputs = [DataInput(name="payload", display_name="Payload", required=True)]
     outputs = [

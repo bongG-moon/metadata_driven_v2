@@ -101,8 +101,8 @@ def install_multi_fake_pymongo(monkeypatch: Any, client: MultiFakeClient) -> Non
 
 
 def test_mongodb_store_compacts_runtime_sources_and_loader_keeps_preview_by_default(monkeypatch: Any) -> None:
-    store = load_component("langflow_components/main_flow/18_mongodb_data_store.py")
-    loader = load_component("langflow_components/main_flow/01_mongodb_data_loader.py")
+    store = load_component("langflow_components/data_analysis_flow/17_mongodb_data_store.py")
+    loader = load_component("langflow_components/data_analysis_flow/05_mongodb_data_loader.py")
     collection = FakeCollection()
     install_fake_pymongo(monkeypatch, collection)
     rows = [{"PRODUCT": "A", "WIP": 10}, {"PRODUCT": "B", "WIP": 20}]
@@ -165,8 +165,8 @@ def test_mongodb_store_compacts_runtime_sources_and_loader_keeps_preview_by_defa
 
 
 def test_mongodb_store_compacts_final_data_and_loader_restores_preview_then_full(monkeypatch: Any) -> None:
-    store = load_component("langflow_components/main_flow/18_mongodb_data_store.py")
-    loader = load_component("langflow_components/main_flow/01_mongodb_data_loader.py")
+    store = load_component("langflow_components/data_analysis_flow/17_mongodb_data_store.py")
+    loader = load_component("langflow_components/data_analysis_flow/05_mongodb_data_loader.py")
     collection = FakeCollection()
     install_fake_pymongo(monkeypatch, collection)
     rows = [{"MODE": "LPDDR5", "WIP": 10}, {"MODE": "HBM", "WIP": 20}]
@@ -231,7 +231,7 @@ def test_mongodb_store_compacts_final_data_and_loader_restores_preview_then_full
 
 
 def test_mongodb_store_after_pandas_compacts_source_and_analysis_rows(monkeypatch: Any) -> None:
-    store = load_component("langflow_components/main_flow/18_mongodb_data_store.py")
+    store = load_component("langflow_components/data_analysis_flow/17_mongodb_data_store.py")
     collection = FakeCollection()
     install_fake_pymongo(monkeypatch, collection)
     source_rows = [{"MODE": "LPDDR5", "WIP": 10}, {"MODE": "HBM", "WIP": 20}]
@@ -290,7 +290,7 @@ def test_mongodb_loader_restores_followup_source_results_when_full_requested(mon
     }
 
     for loader_path in [
-        "langflow_components/main_flow/01_mongodb_data_loader.py",
+        "langflow_components/data_analysis_flow/05_mongodb_data_loader.py",
         "langflow_components/data_analysis_flow/05_mongodb_data_loader.py",
     ]:
         loader = load_component(loader_path)
@@ -375,7 +375,7 @@ def test_mongodb_loader_uses_collection_name_from_data_ref(monkeypatch: Any) -> 
 
 
 def test_answer_response_state_keeps_product_key_summary_without_full_restore() -> None:
-    answer_builder = load_component("langflow_components/main_flow/20_answer_response_builder.py")
+    answer_builder = load_component("langflow_components/data_analysis_flow/19_answer_response_builder.py")
     payload = {
         "request": {"session_id": "session-1", "question": "previous products"},
         "intent_plan": {"intent_type": "multi_step_analysis", "analysis_kind": "rank_wip_then_join_production", "product_grain": ["MODE"]},
@@ -406,8 +406,8 @@ def test_answer_response_state_keeps_product_key_summary_without_full_restore() 
 def test_answer_response_state_preserves_followup_source_refs() -> None:
     source_ref = {"store": "mongodb", "ref_id": "source-ref", "collection_name": "agent_v2_result_store"}
     for builder_path in [
-        "langflow_components/main_flow/20_answer_response_builder.py",
-        "langflow_components/data_analysis_flow/18_answer_response_builder.py",
+        "langflow_components/data_analysis_flow/19_answer_response_builder.py",
+        "langflow_components/data_analysis_flow/19_answer_response_builder.py",
     ]:
         answer_builder = load_component(builder_path)
         payload = {
@@ -439,7 +439,7 @@ def test_answer_response_state_preserves_followup_source_refs() -> None:
 
 
 def test_request_state_loader_compacts_previous_current_data_without_mongodb_loader() -> None:
-    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    request_loader = load_component("langflow_components/data_analysis_flow/00_analysis_request_loader.py")
     rows = [{"MODE": f"P{i}", "WIP": i} for i in range(8)]
     previous_state = {
         "chat_history": [{"role": "assistant", "content": "previous"}],

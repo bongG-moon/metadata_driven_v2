@@ -40,11 +40,14 @@ FORBIDDEN_ROOT_NAMES = {
     "subprocess",
     "sys",
 }
+PANDAS_WARNING_PREFIX = "pandas_executor:"
 
 
 def execute_pandas_from_llm(payload_value: Any, llm_response_value: Any) -> dict[str, Any]:
     payload = _payload(payload_value)
     if payload.get("direct_response_ready"):
+        return payload
+    if _should_pass_through_repair_payload(payload):
         return payload
     plan = payload.get("intent_plan") if isinstance(payload.get("intent_plan"), dict) else {}
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
@@ -58,9 +61,11 @@ def execute_pandas_from_llm(payload_value: Any, llm_response_value: Any) -> dict
 
     next_payload = dict(payload)
     next_payload["analysis"] = analysis
+    if _is_repair_attempt_payload(payload):
+        next_payload["pandas_repair"] = _mark_repair_attempt_result(payload.get("pandas_repair"), analysis)
     if analysis.get("errors"):
         next_payload["warnings"] = list(next_payload.get("warnings", [])) + [
-            f"pandas_executor: {item}" for item in analysis["errors"]
+            f"{PANDAS_WARNING_PREFIX} {item}" for item in analysis["errors"]
         ]
     return next_payload
 
@@ -109,6 +114,9 @@ def _execute_generated_pandas_code(
         if _should_replace_empty_generated_result(result_df, fallback_df):
             result_df = _normalize_result_columns(fallback_df, plan)
             code = code + "\n# executor_fallback: generated code returned an empty contract result"
+        elif _should_replace_incomplete_generated_result(result_df, fallback_df, plan):
+            result_df = _normalize_result_columns(fallback_df, plan)
+            code = code + "\n# executor_fallback: generated code missed required plan output columns"
     except Exception as exc:
         fallback_df = _fallback_result_df(plan, runtime_sources)
         if fallback_df is None:
@@ -167,6 +175,8 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
         "WF_QTY": ["WAFER_QTY", "WAFER_COUNT", "WF_COUNT"],
         "DIE_QTY": ["DIE_COUNT"],
         "EQP_COUNT": ["EQUIPMENT_COUNT", "EQP_CNT"],
+        "HOLD_LOT_COUNT": ["HOLD_COUNT", "HOLD_LOT_CNT", "LOT_HOLD_COUNT"],
+        "AVG_IN_TAT": ["IN_TAT_AVG", "AVERAGE_IN_TAT", "MEAN_IN_TAT"],
     }
     for standard_name, aliases in structural_alias_map.items():
         if standard_name in result.columns:
@@ -177,7 +187,9 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
                 break
     if analysis_kind == "lot_quantity_summary" and "DIE_QTY" not in result.columns and "SUB_PROD_QTY" in result.columns:
         rename_map["SUB_PROD_QTY"] = "DIE_QTY"
-    if analysis_kind == "lot_count_by_process" and "OPER_SHORT_DESC" not in result.columns and "OPER_NAME" in result.columns:
+    if analysis_kind == "top_wip_process_hold_lot_in_tat" and "HOLD_LOT_COUNT" not in result.columns and "LOT_COUNT" in result.columns:
+        rename_map["LOT_COUNT"] = "HOLD_LOT_COUNT"
+    if analysis_kind in {"lot_count_by_process", "top_wip_process_hold_lot_in_tat"} and "OPER_SHORT_DESC" not in result.columns and "OPER_NAME" in result.columns:
         rename_map["OPER_NAME"] = "OPER_SHORT_DESC"
 
     if analysis_kind == "rank_wip_then_join_production":
@@ -213,6 +225,8 @@ def _normalize_result_columns(frame: pd.DataFrame, plan: dict[str, Any]) -> pd.D
 
 
 def _fallback_result_df(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame | None:
+    if _is_top_wip_process_hold_lot_in_tat_plan(plan):
+        return _fallback_top_wip_process_hold_lot_in_tat(plan, runtime_sources)
     if _is_top_wip_product_oldest_lot_plan(plan):
         return _fallback_top_wip_product_oldest_lot(plan, runtime_sources)
     if str(plan.get("analysis_kind") or "") == "aggregate_previous_source":
@@ -251,6 +265,110 @@ def _fallback_result_df(plan: dict[str, Any], runtime_sources: dict[str, Any]) -
 
 def _should_replace_empty_generated_result(result_df: pd.DataFrame, fallback_df: pd.DataFrame | None) -> bool:
     return bool(result_df.empty and fallback_df is not None and not fallback_df.empty)
+
+
+def _should_replace_incomplete_generated_result(
+    result_df: pd.DataFrame,
+    fallback_df: pd.DataFrame | None,
+    plan: dict[str, Any],
+) -> bool:
+    if fallback_df is None or fallback_df.empty:
+        return False
+    required = _preferred_columns(plan)
+    if not required and isinstance(plan.get("analysis_output_columns"), list):
+        required = [str(column) for column in plan["analysis_output_columns"] if str(column or "").strip()]
+    if not required:
+        return False
+    return any(column not in result_df.columns for column in required)
+
+
+def _fallback_top_wip_process_hold_lot_in_tat(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame:
+    wip_alias = _source_alias_for_dataset(plan, runtime_sources, "wip")
+    lot_alias = _source_alias_for_dataset(plan, runtime_sources, "lot")
+    wip_rows = runtime_sources.get(wip_alias) if wip_alias else None
+    lot_rows = runtime_sources.get(lot_alias) if lot_alias else None
+    if not isinstance(wip_rows, list) or not isinstance(lot_rows, list):
+        return pd.DataFrame()
+
+    wip_df = _source_dataframe(wip_rows, [], str(plan.get("analysis_kind") or ""))
+    lot_df = _source_dataframe(lot_rows, [], str(plan.get("analysis_kind") or ""))
+    if wip_df.empty or "WIP" not in wip_df.columns:
+        return pd.DataFrame()
+
+    wip_process_column = _process_column(wip_df)
+    if not wip_process_column:
+        return pd.DataFrame()
+
+    top_n = _top_n_for_process_plan(plan)
+    wip_work = wip_df.copy()
+    wip_work["OPER_SHORT_DESC"] = wip_work[wip_process_column].astype(str)
+    wip_work["WIP"] = pd.to_numeric(wip_work["WIP"], errors="coerce").fillna(0)
+    ranked = (
+        wip_work.groupby("OPER_SHORT_DESC", dropna=False, as_index=False)["WIP"]
+        .sum()
+        .sort_values("WIP", ascending=False)
+        .head(top_n)
+    )
+    if ranked.empty:
+        return pd.DataFrame(columns=["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"])
+
+    if lot_df.empty:
+        ranked["HOLD_LOT_COUNT"] = 0
+        ranked["AVG_IN_TAT"] = None
+        return ranked[["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]]
+
+    lot_process_column = _process_column(lot_df)
+    if not lot_process_column:
+        ranked["HOLD_LOT_COUNT"] = 0
+        ranked["AVG_IN_TAT"] = None
+        return ranked[["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]]
+
+    selected_processes = set(ranked["OPER_SHORT_DESC"].astype(str))
+    lot_work = lot_df.copy()
+    lot_work["OPER_SHORT_DESC"] = lot_work[lot_process_column].astype(str)
+    lot_work = lot_work[lot_work["OPER_SHORT_DESC"].isin(selected_processes)].copy()
+    if lot_work.empty:
+        ranked["HOLD_LOT_COUNT"] = 0
+        ranked["AVG_IN_TAT"] = None
+        return ranked[["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]]
+
+    lot_work["IN_TAT"] = pd.to_numeric(lot_work["IN_TAT"], errors="coerce") if "IN_TAT" in lot_work.columns else None
+    status = lot_work["LOT_HOLD_STAT_CD"].astype(str).str.upper().str.replace(" ", "", regex=False) if "LOT_HOLD_STAT_CD" in lot_work.columns else pd.Series("", index=lot_work.index)
+    hold_mask = status.isin({"HOLD", "ONHOLD", "Y", "YES", "TRUE"})
+    lot_id_column = "LOT_ID" if "LOT_ID" in lot_work.columns else ""
+    if lot_id_column:
+        hold_counts = lot_work[hold_mask].groupby("OPER_SHORT_DESC")[lot_id_column].nunique()
+    else:
+        hold_counts = lot_work[hold_mask].groupby("OPER_SHORT_DESC").size()
+    avg_in_tat = lot_work.groupby("OPER_SHORT_DESC")["IN_TAT"].mean() if "IN_TAT" in lot_work.columns else pd.Series(dtype="float64")
+    metrics = pd.DataFrame({"OPER_SHORT_DESC": list(selected_processes)})
+    metrics["HOLD_LOT_COUNT"] = metrics["OPER_SHORT_DESC"].map(hold_counts).fillna(0).astype(int)
+    metrics["AVG_IN_TAT"] = metrics["OPER_SHORT_DESC"].map(avg_in_tat)
+
+    result = ranked.merge(metrics, on="OPER_SHORT_DESC", how="left")
+    result["HOLD_LOT_COUNT"] = result["HOLD_LOT_COUNT"].fillna(0).astype(int)
+    return result[["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]]
+
+
+def _process_column(frame: pd.DataFrame) -> str:
+    for column in ["OPER_SHORT_DESC", "OPER_NAME", "OPER_ID"]:
+        if column in frame.columns:
+            return column
+    return ""
+
+
+def _top_n_for_process_plan(plan: dict[str, Any]) -> int:
+    if isinstance(plan.get("top_n"), int) and plan["top_n"] > 0:
+        return int(plan["top_n"])
+    for step in plan.get("step_plan", []) if isinstance(plan.get("step_plan"), list) else []:
+        if not isinstance(step, dict):
+            continue
+        value = step.get("top_n")
+        if isinstance(value, int) and value > 0:
+            return value
+        if isinstance(value, str) and value.isdigit() and int(value) > 0:
+            return int(value)
+    return 3
 
 
 def _fallback_top_wip_product_oldest_lot(plan: dict[str, Any], runtime_sources: dict[str, Any]) -> pd.DataFrame:
@@ -322,6 +440,8 @@ def _shared_product_keys(plan: dict[str, Any], wip_df: pd.DataFrame, lot_df: pd.
 
 def _is_top_wip_product_oldest_lot_plan(plan: dict[str, Any]) -> bool:
     kind = str(plan.get("analysis_kind") or "").lower()
+    if kind == "top_wip_process_hold_lot_in_tat":
+        return False
     if kind in {
         "top_wip_product_oldest_lot",
         "wip_top_product_oldest_lot",
@@ -334,6 +454,18 @@ def _is_top_wip_product_oldest_lot_plan(plan: dict[str, Any]) -> bool:
     has_lot = any(_job_text_contains(job, "lot") for job in jobs if isinstance(job, dict))
     step_text = json.dumps(plan.get("step_plan") or [], ensure_ascii=False).lower()
     return has_wip and has_lot and "in_tat" in step_text and "wip" in step_text
+
+
+def _is_top_wip_process_hold_lot_in_tat_plan(plan: dict[str, Any]) -> bool:
+    kind = str(plan.get("analysis_kind") or "").lower()
+    if kind == "top_wip_process_hold_lot_in_tat":
+        return True
+    jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
+    has_wip = any(_job_text_contains(job, "wip") for job in jobs if isinstance(job, dict))
+    has_lot = any(_job_text_contains(job, "lot") for job in jobs if isinstance(job, dict))
+    columns = plan.get("analysis_output_columns") if isinstance(plan.get("analysis_output_columns"), list) else []
+    column_text = " ".join(str(column).upper() for column in columns)
+    return has_wip and has_lot and "HOLD_LOT_COUNT" in column_text and "AVG_IN_TAT" in column_text
 
 
 def _job_text_contains(job: dict[str, Any], token: str) -> bool:
@@ -404,6 +536,8 @@ def _preferred_columns(plan: dict[str, Any]) -> list[str]:
         return [*product_keys, "PRODUCTION", "TARGET_QTY", "ACHIEVEMENT_RATE", "BALANCE", "LOW_OUTPUT_FLAG"]
     if kind == "lot_count_by_process":
         return ["OPER_SHORT_DESC", "LOT_COUNT"]
+    if kind == "top_wip_process_hold_lot_in_tat":
+        return ["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]
     if kind == "lot_quantity_summary":
         return ["LOT_COUNT", "WF_QTY", "DIE_QTY"]
     if kind == "aggregate_wip_total":
@@ -639,6 +773,33 @@ def _json_ready(value: Any) -> Any:
     return str(value)
 
 
+def _mark_repair_attempt_result(repair_value: Any, analysis: dict[str, Any]) -> dict[str, Any]:
+    repair = deepcopy(repair_value) if isinstance(repair_value, dict) else {}
+    repair["executed"] = True
+    repair["completed"] = not bool(analysis.get("errors"))
+    repair["status"] = "repaired" if not analysis.get("errors") else "repair_failed"
+    repair["final_errors"] = _as_text_list(analysis.get("errors"))
+    return repair
+
+
+def _should_pass_through_repair_payload(payload: dict[str, Any]) -> bool:
+    repair = payload.get("pandas_repair") if isinstance(payload.get("pandas_repair"), dict) else {}
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    return repair.get("required") is False and bool(analysis) and not analysis.get("errors")
+
+
+def _is_repair_attempt_payload(payload: dict[str, Any]) -> bool:
+    repair = payload.get("pandas_repair") if isinstance(payload.get("pandas_repair"), dict) else {}
+    return repair.get("required") is True
+
+
+def _as_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        value = [value]
+    return [str(item) for item in value if str(item or "").strip()]
+
 def _text(value: Any) -> str:
     if value is None:
         return ""
@@ -669,16 +830,31 @@ class PandasCodeExecutor(Component):
         DataInput(name="payload", display_name="Payload", required=True),
         MessageTextInput(name="llm_response", display_name="LLM Response", required=True),
     ]
-    outputs = [Output(name="payload_out", display_name="Payload", method="build_payload")]
+    outputs = [
+        Output(name="payload_out", display_name="Payload", method="build_payload"),
+    ]
 
     def build_payload(self) -> Data:
+        return Data(data=self._result())
+
+    def _result(self) -> dict[str, Any]:
+        cached = getattr(self, "_cached_result", None)
+        if isinstance(cached, dict):
+            return cached
         result = execute_pandas_from_llm(getattr(self, "payload", None), getattr(self, "llm_response", ""))
+        self._cached_result = result
+        self._set_status(result)
+        return result
+
+    def _set_status(self, result: dict[str, Any]) -> None:
         analysis = result.get("analysis", {})
+        repair = result.get("pandas_repair") if isinstance(result.get("pandas_repair"), dict) else {}
         self.status = {
             "status": analysis.get("status"),
             "rows": analysis.get("row_count", 0),
             "safety_passed": analysis.get("safety_passed", False),
             "executed": analysis.get("executed", False),
             "errors": len(analysis.get("errors", [])),
+            "repair_required": repair.get("required", False),
+            "repair_status": repair.get("status", ""),
         }
-        return Data(data=result)

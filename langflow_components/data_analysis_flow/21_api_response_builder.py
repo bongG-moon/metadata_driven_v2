@@ -307,13 +307,13 @@ def _unique_values(values: list[Any]) -> list[Any]:
 
 
 class MainFlowApiResponseBuilder(Component):
-    display_name = "22 Main Flow API Response Builder"
+    display_name = "21 API Response Builder"
     description = "Projects the final main-flow payload into a compact JSON response for web/API clients."
     icon = "Braces"
     name = "MainFlowApiResponseBuilder"
 
     inputs = [
-        DataInput(name="payload", display_name="Payload", info="Payload output from 20 Answer Response Builder.", input_types=["Data", "JSON"], required=True),
+        DataInput(name="payload", display_name="Payload", info="Payload output from 19 Answer Response Builder.", input_types=["Data", "JSON"], required=True),
     ]
 
     outputs = [

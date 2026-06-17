@@ -312,7 +312,13 @@ def _apply_analysis_recipe(
     default_kind = str(recipe.get("default_analysis_kind") or recipe_key).strip()
     current_kind = str(plan.get("analysis_kind") or "none")
     detail_requested = bool(plan.get("detail_rows_requested"))
-    if not detail_requested and default_kind and current_kind in {"", "none", "aggregate", "aggregate_join", "generic_analysis"}:
+    override_kinds = _as_recipe_text_list(recipe.get("override_analysis_kinds"))
+    force_kind = bool(recipe.get("force_analysis_kind"))
+    if not detail_requested and default_kind and (
+        force_kind
+        or current_kind in override_kinds
+        or current_kind in {"", "none", "aggregate", "aggregate_join", "generic_analysis"}
+    ):
         plan["analysis_kind"] = default_kind
     if not detail_requested and default_kind and (not plan.get("datasets") or not plan.get("retrieval_jobs")):
         plan["analysis_kind"] = default_kind
@@ -324,12 +330,18 @@ def _apply_analysis_recipe(
     plan["product_grain"] = [] if detail_requested else _resolve_recipe_grain(question, recipe, metadata, plan)
     if not detail_requested:
         _apply_recipe_defaults(plan, recipe, question)
+        _apply_recipe_filter_policy(plan, recipe)
 
     selected = _recipe_datasets(recipe, metadata, question)
+    replace_retrieval_jobs = bool(recipe.get("replace_retrieval_jobs")) and not detail_requested
     if selected:
-        existing_datasets = _unique(plan.get("datasets", []))
-        plan["datasets"] = _unique([*existing_datasets, *[item["dataset_key"] for item in selected]])
-    existing_jobs = plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
+        selected_datasets = [item["dataset_key"] for item in selected]
+        if replace_retrieval_jobs or bool(recipe.get("replace_datasets")):
+            plan["datasets"] = _unique(selected_datasets)
+        else:
+            existing_datasets = _unique(plan.get("datasets", []))
+            plan["datasets"] = _unique([*existing_datasets, *selected_datasets])
+    existing_jobs = [] if replace_retrieval_jobs else plan.get("retrieval_jobs") if isinstance(plan.get("retrieval_jobs"), list) else []
     _align_existing_jobs_to_recipe_families(plan, existing_jobs, selected, metadata, recipe_key, recipe, notes)
     existing_dataset_keys = {str(job.get("dataset_key") or "") for job in existing_jobs if isinstance(job, dict)}
     jobs_to_add = []
@@ -350,12 +362,12 @@ def _apply_analysis_recipe(
                 "required_columns": _recipe_required_columns(plan, recipe, item["family"], dataset_catalog),
             }
         )
-    if jobs_to_add:
+    if jobs_to_add or replace_retrieval_jobs:
         plan["retrieval_jobs"] = [*existing_jobs, *jobs_to_add]
-    if not detail_requested and not plan.get("step_plan"):
-        step = _recipe_step_plan(plan, recipe_key, recipe)
-        if step:
-            plan["step_plan"] = [step]
+    if not detail_requested and (not plan.get("step_plan") or bool(recipe.get("override_step_plan"))):
+        steps = _recipe_step_plan(plan, recipe_key, recipe, question)
+        if steps:
+            plan["step_plan"] = steps
     if selected or jobs_to_add:
         _append_once(notes, f"분석 recipe '{recipe_key}' 기준으로 누락된 datasets/retrieval_jobs를 메타데이터에서 보완했습니다.")
 
@@ -403,6 +415,10 @@ def _align_existing_jobs_to_recipe_families(
 
 
 def _apply_recipe_defaults(plan: dict[str, Any], recipe: dict[str, Any], question: str) -> None:
+    if str(recipe.get("top_n_policy") or "") == "question_or_default":
+        detected_top_n = _rank_n_from_question(question)
+        if detected_top_n:
+            plan["top_n"] = detected_top_n
     defaults = recipe.get("defaults") if isinstance(recipe.get("defaults"), dict) else {}
     for key, value in defaults.items():
         if key == "input_target_column":
@@ -415,6 +431,23 @@ def _apply_recipe_defaults(plan: dict[str, Any], recipe: dict[str, Any], questio
         plan["analysis_output_columns"] = deepcopy(recipe.get("output_columns"))
 
 
+def _apply_recipe_filter_policy(plan: dict[str, Any], recipe: dict[str, Any]) -> None:
+    blocked_fields = _as_recipe_text_list(recipe.get("blocked_filter_fields"))
+    if not blocked_fields:
+        return
+    plan["blocked_filter_fields"] = _unique([*(_as_recipe_text_list(plan.get("blocked_filter_fields"))), *blocked_fields])
+    if isinstance(plan.get("filters"), list):
+        plan["filters"] = _remove_filter_fields(plan["filters"], blocked_fields)
+    for job in plan.get("retrieval_jobs", []) if isinstance(plan.get("retrieval_jobs"), list) else []:
+        if isinstance(job, dict) and isinstance(job.get("filters"), list):
+            job["filters"] = _remove_filter_fields(job["filters"], blocked_fields)
+
+
+def _rank_n_from_question(question: str) -> int:
+    match = re.search(r"\b(\d{1,2})\b", str(question or ""))
+    return int(match.group(1)) if match else 0
+
+
 def _resolve_recipe_grain(
     question: str,
     recipe: dict[str, Any],
@@ -423,6 +456,8 @@ def _resolve_recipe_grain(
 ) -> list[str]:
     policy = str(recipe.get("grain_policy") or "").strip()
     if policy == "aggregate_total":
+        return []
+    if policy in {"no_product_grain", "recipe_step_grain", "explicit_process_grain"}:
         return []
     explicit_grain = _explicit_grain_from_question(question, metadata)
     if explicit_grain is not None:
@@ -512,6 +547,9 @@ def _recipe_required_columns(
     family: str,
     dataset_catalog: dict[str, Any],
 ) -> list[str]:
+    overrides = recipe.get("required_columns_by_family") if isinstance(recipe.get("required_columns_by_family"), dict) else {}
+    if isinstance(overrides.get(family), list) and overrides[family]:
+        return _unique(overrides[family])
     if plan.get("detail_rows_requested") or str(plan.get("analysis_kind") or "") == "detail_rows":
         detail_columns = dataset_catalog.get("default_detail_columns")
         if isinstance(detail_columns, list) and detail_columns:
@@ -531,18 +569,49 @@ def _recipe_required_columns(
     return _unique(columns)
 
 
-def _recipe_step_plan(plan: dict[str, Any], recipe_key: str, recipe: dict[str, Any]) -> dict[str, Any]:
+def _recipe_step_plan(plan: dict[str, Any], recipe_key: str, recipe: dict[str, Any], question: str) -> list[dict[str, Any]]:
+    template = recipe.get("step_plan_template") if isinstance(recipe.get("step_plan_template"), list) else []
+    if template:
+        aliases = recipe.get("source_aliases_by_family") if isinstance(recipe.get("source_aliases_by_family"), dict) else {}
+        top_n = plan.get("top_n")
+        if not isinstance(top_n, int) or top_n <= 0:
+            top_n = _rank_n_from_question(question) or int((recipe.get("defaults") or {}).get("top_n") or 0) or 5
+        steps = []
+        for raw_step in template:
+            if not isinstance(raw_step, dict):
+                continue
+            step = deepcopy(raw_step)
+            source_family = str(step.pop("source_family", "") or "")
+            if source_family and not step.get("source_alias"):
+                step["source_alias"] = str(aliases.get(source_family) or "")
+            step = _expand_recipe_step_value(step, top_n, plan)
+            steps.append(step)
+        return steps
     kind = str(plan.get("analysis_kind") or recipe.get("default_analysis_kind") or "").strip()
     if not kind:
-        return {}
-    return {
-        "step_id": f"apply_{recipe_key}",
-        "operation": kind,
-        "recipe_key": recipe_key,
-        "grain_policy": recipe.get("grain_policy", ""),
-        "group_by": plan.get("product_grain", []),
-        "output_columns": deepcopy(recipe.get("output_columns", [])),
-    }
+        return []
+    return [
+        {
+            "step_id": f"apply_{recipe_key}",
+            "operation": kind,
+            "recipe_key": recipe_key,
+            "grain_policy": recipe.get("grain_policy", ""),
+            "group_by": plan.get("product_grain", []),
+            "output_columns": deepcopy(recipe.get("output_columns", [])),
+        }
+    ]
+
+
+def _expand_recipe_step_value(value: Any, top_n: int, plan: dict[str, Any]) -> Any:
+    if value == "$top_n":
+        return top_n
+    if value == "$analysis_output_columns":
+        return deepcopy(plan.get("analysis_output_columns", []))
+    if isinstance(value, list):
+        return [_expand_recipe_step_value(item, top_n, plan) for item in value]
+    if isinstance(value, dict):
+        return {key: _expand_recipe_step_value(item, top_n, plan) for key, item in value.items()}
+    return value
 
 
 def _fallback_retrieval_jobs(
@@ -851,6 +920,7 @@ def _augmented_filters_for_job(
         dataset_key=dataset_key,
         dataset_catalog=dataset_catalog,
         job=job,
+        blocked_filter_fields=_blocked_filter_fields(plan),
     )
     merged = [deepcopy(item) for item in raw_filters if isinstance(item, dict)]
     merged.extend(deepcopy(item) for item in plan_filters if isinstance(item, dict))
@@ -859,6 +929,9 @@ def _augmented_filters_for_job(
     merged.extend(deepcopy(item) for item in inferred_filters if isinstance(item, dict))
     if plan.get("state_product_keys") and _supports_product_grain_filter(dataset_catalog, plan):
         merged.append({"field": "PRODUCT_GRAIN", "op": "from_state"})
+    blocked_fields = _blocked_filter_fields(plan)
+    if blocked_fields:
+        merged = _remove_filter_fields(merged, blocked_fields)
     merged = _drop_conflicting_product_alias_filters(merged, inferred_filters, metadata)
     return _filters_for_dataset(_dedupe_filters(merged), dataset_key, dataset_catalog)
 
@@ -888,6 +961,7 @@ def _infer_filters(
     dataset_key: str = "",
     dataset_catalog: dict[str, Any] | None = None,
     job: dict[str, Any] | None = None,
+    blocked_filter_fields: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     text = str(question or "")
     catalog = dataset_catalog or {}
@@ -895,7 +969,8 @@ def _infer_filters(
     date_value = _date_value_for_job(text, dataset_key, catalog, job or {}, request_date)
     if date_value and _metadata_has_filter(metadata, "DATE") and _catalog_has_filter(catalog, "DATE"):
         filters.append({"field": "DATE", "op": "eq", "value": date_value})
-    filters.extend(_metadata_term_filters(text, metadata, dataset_key, catalog))
+    term_filters = _metadata_term_filters(text, metadata, dataset_key, catalog)
+    filters.extend(_remove_filter_fields(term_filters, blocked_filter_fields or []))
     process_values = _metadata_process_values(text, metadata)
     if process_values and _metadata_has_filter(metadata, "OPER_NAME") and _catalog_has_filter(catalog, "OPER_NAME"):
         filters.append({"field": "OPER_NAME", "op": "in", "values": _unique(process_values)})
@@ -1024,6 +1099,8 @@ def _is_lot_count_by_process_question(
     catalog: dict[str, Any],
     question: str,
 ) -> bool:
+    if plan.get("matched_analysis_recipe") and str(plan.get("analysis_kind") or "") != "lot_count_by_process":
+        return False
     if str(plan.get("analysis_kind") or "") == "lot_count_by_process":
         return True
     datasets = {str(item) for item in plan.get("datasets", []) if str(item or "").strip()}
@@ -1649,6 +1726,33 @@ def _dedupe_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         seen.add(key)
         result.append(item)
+    return result
+
+
+def _blocked_filter_fields(plan: dict[str, Any]) -> list[str]:
+    return _as_recipe_text_list(plan.get("blocked_filter_fields"))
+
+
+def _remove_filter_fields(filters: list[Any], blocked_fields: list[str]) -> list[dict[str, Any]]:
+    blocked = {str(field or "").strip() for field in blocked_fields if str(field or "").strip()}
+    if not blocked:
+        return [deepcopy(item) for item in filters if isinstance(item, dict)]
+    return [
+        deepcopy(item)
+        for item in filters
+        if isinstance(item, dict) and str(item.get("field") or "").strip() not in blocked
+    ]
+
+
+def _as_recipe_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    result = []
+    for item in items:
+        text = str(item or "").strip()
+        if text and text not in result:
+            result.append(text)
     return result
 
 

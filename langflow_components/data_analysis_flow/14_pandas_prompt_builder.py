@@ -43,6 +43,13 @@ def build_pandas_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "Do not use pd.inf, float('inf'), or infinity replacement. Avoid division by zero with boolean masks before dividing.",
             "If the generated code contains any import statement, the safety check will fail.",
             "",
+            "Sequential plan execution rules:",
+            "- Read plan['step_plan'] and implement every step in order; do not collapse a multi-step plan into only the easiest count or groupby.",
+            "- Preserve intermediate DataFrames for ranked/filtering steps, then use them in later filtering, aggregation, and join steps.",
+            "- If a step ranks top_n rows, perform that ranking before downstream metrics that depend on the ranked scope.",
+            "- If the question or plan asks for multiple metrics, compute all of them and include every plan['analysis_output_columns'] column in result_df when source data exists.",
+            "- If generated output is missing required plan columns, the executor may replace it with a deterministic fallback.",
+            "",
             "User question:",
             str(request.get("question") or ""),
             "",
@@ -119,6 +126,15 @@ def _analysis_instruction(plan: dict[str, Any]) -> str:
         )
     if kind == "lot_count_by_process":
         return "Group lot_status rows by OPER_SHORT_DESC and calculate LOT_COUNT as LOT_ID.nunique()."
+    if kind == "top_wip_process_hold_lot_in_tat":
+        return (
+            "This is a sequential process-level analysis. Step 1: from the WIP source, group by OPER_NAME, "
+            "sum WIP, sort descending, keep step_plan[0].top_n, and rename the process output column to OPER_SHORT_DESC. "
+            "Step 2: from the lot_status source, use only rows whose OPER_SHORT_DESC/OPER_NAME is in those top processes; "
+            "calculate HOLD_LOT_COUNT as LOT_ID.nunique() where LOT_HOLD_STAT_CD means HOLD/ONHOLD, and calculate "
+            "AVG_IN_TAT as the numeric mean of IN_TAT for the selected process rows. Step 3: left join the lot metrics "
+            "to the ranked WIP result and return exactly ['OPER_SHORT_DESC', 'WIP', 'HOLD_LOT_COUNT', 'AVG_IN_TAT']."
+        )
     if kind == "lot_quantity_summary":
         return (
             "Return one row with LOT_COUNT=LOT_ID.nunique(), WF_QTY=sum(WF_QTY), DIE_QTY=sum(SUB_PROD_QTY). "

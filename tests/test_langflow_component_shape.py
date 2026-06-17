@@ -54,37 +54,36 @@ def test_langflow_components_do_not_reuse_input_names_as_output_names() -> None:
             assert not overlap, f"{path} has overlapping input/output names: {sorted(overlap)}"
 
 
-def test_main_flow_files_use_clean_sequential_numbering() -> None:
+def test_data_analysis_flow_files_use_clean_sequential_numbering() -> None:
     expected_files = [
-        "00_request_state_loader.py",
-        "01_mongodb_data_loader.py",
-        "02_metadata_context_loader.py",
-        "03_route_candidate_builder.py",
-        "04_route_classifier_prompt_builder.py",
-        "05_route_classifier_normalizer.py",
-        "06_metadata_qa_response_builder.py",
-        "07_intent_prompt_builder.py",
-        "08_intent_plan_normalizer.py",
-        "09_dummy_data_retriever.py",
-        "10_oracle_query_retriever.py",
-        "11_h_api_retriever.py",
-        "12_datalake_retriever.py",
-        "13_goodocs_retriever.py",
-        "14_source_retrieval_merger.py",
-        "15_retrieval_payload_adapter.py",
-        "16_pandas_prompt_builder.py",
-        "17_pandas_code_executor.py",
-        "18_mongodb_data_store.py",
-        "19_answer_prompt_builder.py",
-        "20_answer_response_builder.py",
-        "21_answer_message_adapter.py",
-        "22_api_response_builder.py",
+        "00_analysis_request_loader.py",
+        "01_metadata_context_loader.py",
+        "02_intent_prompt_builder.py",
+        "03_intent_plan_normalizer.py",
+        "04_previous_result_restore_router.py",
+        "05_mongodb_data_loader.py",
+        "06_previous_result_restore_merger.py",
+        "07_dummy_data_retriever.py",
+        "08_oracle_query_retriever.py",
+        "09_h_api_retriever.py",
+        "10_datalake_retriever.py",
+        "11_goodocs_retriever.py",
+        "12_source_retrieval_merger.py",
+        "13_retrieval_payload_adapter.py",
+        "14_pandas_prompt_builder.py",
+        "15_pandas_code_executor.py",
+        "16_pandas_repair_prompt_builder.py",
+        "17_mongodb_data_store.py",
+        "18_answer_prompt_builder.py",
+        "19_answer_response_builder.py",
+        "20_answer_message_adapter.py",
+        "21_api_response_builder.py",
     ]
-    actual_files = [path.name for path in sorted((PROJECT_ROOT / "langflow_components" / "main_flow").glob("*.py"))]
+    actual_files = [path.name for path in sorted((PROJECT_ROOT / "langflow_components" / "data_analysis_flow").glob("*.py"))]
     assert actual_files == expected_files
 
-    for path in sorted((PROJECT_ROOT / "langflow_components" / "main_flow").glob("*.py")):
-        module_name = f"main_flow_order_{path.stem}".replace(".", "_")
+    for path in sorted((PROJECT_ROOT / "langflow_components" / "data_analysis_flow").glob("*.py")):
+        module_name = f"data_analysis_flow_order_{path.stem}".replace(".", "_")
         spec = importlib.util.spec_from_file_location(module_name, path)
         module = importlib.util.module_from_spec(spec)
         assert spec and spec.loader
@@ -101,7 +100,17 @@ def test_main_flow_files_use_clean_sequential_numbering() -> None:
 
 def test_mongodb_metadata_components_expose_full_collection_names() -> None:
     expected_inputs_by_file = {
-        "main_flow/02_metadata_context_loader.py": {
+        "data_analysis_flow/01_metadata_context_loader.py": {
+            "domain_collection_name",
+            "table_catalog_collection_name",
+            "main_flow_filter_collection_name",
+        },
+        "router_flow/01_metadata_context_loader.py": {
+            "domain_collection_name",
+            "table_catalog_collection_name",
+            "main_flow_filter_collection_name",
+        },
+        "metadata_qa_flow/01_metadata_context_loader.py": {
             "domain_collection_name",
             "table_catalog_collection_name",
             "main_flow_filter_collection_name",
@@ -166,18 +175,14 @@ def test_metadata_authoring_duplicate_action_inputs_are_dropdowns() -> None:
 
 def test_fixed_choice_inputs_are_dropdowns() -> None:
     fixed_choice_inputs = {
-        "main_flow/01_mongodb_data_loader.py": {
-            "enabled": ("true", ["true", "false"]),
-            "restore_mode": ("auto", ["auto", "preview", "full"]),
-        },
         "data_analysis_flow/05_mongodb_data_loader.py": {
             "enabled": ("true", ["true", "false"]),
             "restore_mode": ("auto", ["auto", "preview", "full"]),
         },
-        "main_flow/18_mongodb_data_store.py": {
-            "enabled": ("true", ["true", "false"]),
+        "data_analysis_flow/16_pandas_repair_prompt_builder.py": {
+            "max_attempts": ("1", ["0", "1", "2"]),
         },
-        "data_analysis_flow/16_mongodb_data_store.py": {
+        "data_analysis_flow/17_mongodb_data_store.py": {
             "enabled": ("true", ["true", "false"]),
         },
         "session_state_flow/00_mongodb_session_state_loader.py": {
@@ -205,6 +210,20 @@ def test_fixed_choice_inputs_are_dropdowns() -> None:
             assert input_item.options == expected_options
 
 
+def test_pandas_repair_prompt_builder_exposes_separate_output_ports() -> None:
+    outputs = _component_outputs("data_analysis_flow/16_pandas_repair_prompt_builder.py")
+    expected_types = {
+        "payload_out": ["Data"],
+        "repair_prompt": ["Message"],
+        "repair_decision": ["Data"],
+    }
+
+    for output_name, output_types in expected_types.items():
+        output_item = outputs[output_name]
+        assert getattr(output_item, "group_outputs", False) is True
+        assert getattr(output_item, "types", []) == output_types
+
+
 def _component_input(relative_path: str, input_name: str):
     path = PROJECT_ROOT / "langflow_components" / relative_path
     module_name = f"input_contract_{path.stem}".replace(".", "_")
@@ -223,4 +242,21 @@ def _component_input(relative_path: str, input_name: str):
         if getattr(input_item, "name", None) == input_name:
             return input_item
     raise AssertionError(f"{path} must expose input {input_name}")
+
+
+def _component_outputs(relative_path: str) -> dict[str, object]:
+    path = PROJECT_ROOT / "langflow_components" / relative_path
+    module_name = f"output_contract_{path.stem}".replace(".", "_")
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+
+    component_classes = [
+        value
+        for value in module.__dict__.values()
+        if isinstance(value, type) and any("Component" in base.__name__ for base in value.__bases__)
+    ]
+    assert component_classes, f"{path} must define a Component subclass"
+    return {getattr(item, "name", ""): item for item in getattr(component_classes[0], "outputs", [])}
 

@@ -99,6 +99,13 @@ def test_domain_authoring_preserves_dataset_specific_conditions_and_metric_depen
                     "metric_terms": ["achievement_rate"],
                     "grain_policy": "question_or_product_grain",
                     "source_aliases_by_family": {"production": "production_data"},
+                    "required_columns_by_family": {"production": ["WORK_DT", "PRODUCTION"]},
+                    "override_analysis_kinds": ["aggregate_join"],
+                    "blocked_filter_fields": ["LOT_HOLD_STAT_CD"],
+                    "replace_retrieval_jobs": True,
+                    "override_step_plan": True,
+                    "top_n_policy": "question_or_default",
+                    "step_plan_template": [{"step_id": "join", "operation": "production_wip_target_rate"}],
                     "output_columns": ["WIP", "PRODUCTION", "OUT_PLAN", "ACHIEVEMENT_RATE"],
                 },
             },
@@ -116,6 +123,13 @@ def test_domain_authoring_preserves_dataset_specific_conditions_and_metric_depen
     assert items["achievement_rate"]["payload"]["output_column"] == "ACHIEVEMENT_RATE"
     assert items["production_wip_target_rate"]["section"] == "analysis_recipes"
     assert items["production_wip_target_rate"]["payload"]["required_dataset_families"] == ["production", "wip", "target"]
+    assert items["production_wip_target_rate"]["payload"]["required_columns_by_family"] == {"production": ["WORK_DT", "PRODUCTION"]}
+    assert items["production_wip_target_rate"]["payload"]["override_analysis_kinds"] == ["aggregate_join"]
+    assert items["production_wip_target_rate"]["payload"]["blocked_filter_fields"] == ["LOT_HOLD_STAT_CD"]
+    assert items["production_wip_target_rate"]["payload"]["replace_retrieval_jobs"] is True
+    assert items["production_wip_target_rate"]["payload"]["override_step_plan"] is True
+    assert items["production_wip_target_rate"]["payload"]["top_n_policy"] == "question_or_default"
+    assert items["production_wip_target_rate"]["payload"]["step_plan_template"] == [{"step_id": "join", "operation": "production_wip_target_rate"}]
     assert items["production_wip_target_rate"]["payload"]["output_columns"] == [
         "WIP",
         "PRODUCTION",

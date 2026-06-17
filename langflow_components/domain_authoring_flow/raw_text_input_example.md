@@ -195,6 +195,19 @@ die 수량, die가 몇 개인지, SUB PROD 수량은 lot_status 데이터의 SUB
 
 현재 DA공정 재공 수량처럼 단순 재공 수량이나 WIP 수량을 물어보면 wip_today 또는 wip 데이터의 WIP 컬럼을 사용해줘.
 현재 DA공정에서 재공 LOT이 몇 개인지, wafer가 몇 개인지, die수량은 몇 개인지처럼 LOT/wafer/die 단위를 직접 물어보면 wip_today가 아니라 lot_status 데이터를 사용해줘.
+
+재공이 많은 세부공정 top N을 먼저 찾고, 그 공정들의 HOLD LOT 수와 평균 IN TAT를 같이 보여달라는 질문은 복합 순차 분석 recipe로 저장해줘.
+이 recipe의 key는 top_wip_process_hold_lot_in_tat이고 analysis_kind도 top_wip_process_hold_lot_in_tat이야.
+질문 cue는 재공, 공정, hold, in tat이고, "hold LOT 평균 in tat", "재공 많은 공정 hold lot" 같은 표현으로도 물어볼 수 있어.
+필요한 dataset family는 wip과 lot이고, source alias는 wip은 wip_data, lot은 lot_status_data를 사용해.
+이 분석은 제품 grain이 아니라 recipe step 내부의 공정 grain을 사용하므로 grain_policy는 recipe_step_grain으로 저장해줘.
+WIP source의 필수 컬럼은 WORK_DT, OPER_NAME, WIP이고, lot source의 필수 컬럼은 OPER_SHORT_DESC, LOT_ID, LOT_HOLD_STAT_CD, IN_TAT야.
+LLM이 lot_count_by_process, rank_top_n, aggregate_wip_total처럼 단순 분석으로 잘못 잡아도 이 recipe가 우선 적용되도록 override_analysis_kinds에 넣어줘.
+이 recipe는 기존 retrieval_jobs와 step_plan을 교체하는 패턴이므로 replace_datasets, replace_retrieval_jobs, override_step_plan을 true로 저장해줘.
+HOLD 조건은 lot_status 조회 필터로 먼저 걸지 말고 HOLD_LOT_COUNT 계산 조건으로 사용해야 하므로 blocked_filter_fields에는 LOT_HOLD_STAT_CD와 LOT_STAT_CD를 넣어줘.
+top_n은 질문에 숫자가 있으면 그 숫자를 쓰고, 없으면 기본 3을 쓰도록 top_n_policy는 question_or_default, defaults.top_n은 3으로 저장해줘.
+step_plan_template는 1) wip_data를 OPER_NAME별로 WIP 합산 후 desc top_n 랭킹, 2) lot_status_data에서 해당 공정들의 HOLD_LOT_COUNT와 AVG_IN_TAT 계산, 3) OPER_SHORT_DESC 기준 left join 순서로 저장해줘.
+최종 output_columns는 OPER_SHORT_DESC, WIP, HOLD_LOT_COUNT, AVG_IN_TAT야.
 <!-- bulk_domain:end -->
 
 ## 단일 항목 예시

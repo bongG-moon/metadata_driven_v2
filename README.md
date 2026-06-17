@@ -24,8 +24,8 @@ state -> metadata load -> intent plan -> retrieval routing -> retrieval -> panda
 | --- | --- |
 | `metadata/` | domain, table catalog, main flow filter, regression question seed |
 | `reference_runtime/` | Langflow 없이 로컬에서 검증하는 Python reference runtime |
-| `langflow_components/main_flow/` | 메인 Langflow canvas용 standalone custom components |
-| `langflow_components/main_flow/09~14_*_retriever.py` | source_type별 retriever components |
+| `langflow_components/router_flow/` | 질문 유형을 분류하는 router flow components |
+| `langflow_components/data_analysis_flow/` | source 조회, pandas 분석, result store, 답변 생성 components |
 | `langflow_components/*_authoring_flow/` | 자연어 metadata authoring flows |
 | `sample_data/` | dummy/source 검증용 fixture |
 | `tools/` | 실행, 검증, MongoDB 업로드 스크립트 |
@@ -48,35 +48,34 @@ Web/API
 - `data_analysis_flow/`: 실제 source 조회, pandas 분석, MongoDB result store, 최종 답변을 담당합니다.
 - `report_generation_flow/`: 리포트 생성 요청 확장 flow입니다.
 - `operations_diagnosis_flow/`: 운영 이상/병목 진단 요청 확장 flow입니다.
-- `main_flow/`: 기존 단일 canvas 배포를 위한 compatibility flow입니다.
 
-## Main Flow
+## Data Analysis Flow
 
 Langflow canvas에서는 LLM node를 중간에 명시적으로 둡니다.
 
 ```text
 Chat Input
--> 00 Request State Loader
--> 02 Metadata Context Loader
--> 03 Route Candidate Builder
--> 04 Route Classifier Prompt Builder
--> Route Classifier LLM (question-type route)
--> 05 Route Classifier Normalizer
--> 06 Metadata QA Response Builder
--> 07 Intent Prompt Builder
+-> router_flow
+-> data_analysis_flow 00 Analysis Request Loader
+-> 01 Metadata Context Loader
+-> 02 Intent Prompt Builder
 -> Gemini/LLM Intent JSON
--> 08 Intent Plan Normalizer
--> 01 MongoDB Data Loader (restore previous result rows only when needed; internal mode=auto)
--> 09~14 main_flow retriever nodes
--> 15 Retrieval Payload Adapter
--> 16 Pandas Prompt Builder
+-> 03 Intent Plan Normalizer
+-> 04 Previous Result Restore Router
+-> 05 MongoDB Data Loader (only when previous_result_restore.required=true)
+-> 06 Previous Result Restore Merger
+-> 07~12 source retriever/merger nodes
+-> 13 Retrieval Payload Adapter
+-> 14 Pandas Prompt Builder
 -> Gemini/LLM Pandas Code JSON
--> 17 Pandas Code Executor
--> 18 MongoDB Data Store
--> 19 Answer Prompt Builder
+-> 15 Pandas Code Executor
+-> 16 Pandas Repair Prompt Builder
+-> optional Pandas Repair LLM + second 15 Pandas Code Executor
+-> 17 MongoDB Data Store
+-> 18 Answer Prompt Builder
 -> Gemini/LLM Final Answer
--> 20 Answer Response Builder
--> 21 Answer Message Adapter
+-> 19 Answer Response Builder
+-> 20 Answer Message Adapter
 -> Chat Output
 ```
 
@@ -122,7 +121,7 @@ Main flow result rows use a separate full-name collection, `MONGODB_RESULT_COLLE
 If the caller passes compact previous `state.current_data` with preview rows, row count, columns, `data_ref`, and product key summary, `00 Request State Loader` is enough before metadata loading.
 In `data_analysis_flow`, `04 Previous Result Restore Router` decides whether full previous rows are needed. Backend or Langflow branch logic should call `05 MongoDB Data Loader` only when `previous_result_restore.required=true`; `06 Previous Result Restore Merger` then merges the optional loader branch back into the main payload.
 When a follow-up question must recalculate, filter, sort, regroup, or show detail rows from the previous result itself, `03 Intent Plan Normalizer` sets `requires_full_previous_result_restore=true` or `previous_result_restore_mode=full`.
-`16 MongoDB Data Store` writes both source `runtime_sources` and pandas `analysis.rows` right after pandas execution, then leaves preview rows plus MongoDB `data_ref` pointers in the payload.
+`17 MongoDB Data Store` writes both source `runtime_sources` and final pandas `analysis.rows` right after the pandas repair branch, then leaves preview rows plus MongoDB `data_ref` pointers in the payload.
 Follow-up product context is carried in `state.current_data.product_key_values`, so product-key follow-ups do not need to load full previous rows.
 
 `.env`는 원본 workspace에서 복사되어 있습니다. MongoDB metadata는 prefix로 collection을 조합하지 않고 full collection name 3개를 그대로 입력합니다. 기본값은 `MONGODB_DATABASE=metadata_driven_agent_v2`, `MONGODB_DOMAIN_COLLECTION=agent_v2_domain_items`, `MONGODB_TABLE_CATALOG_COLLECTION=agent_v2_table_catalog_items`, `MONGODB_MAIN_FLOW_FILTER_COLLECTION=agent_v2_main_flow_filters`입니다.
@@ -140,14 +139,11 @@ python tools\upload_json_to_mongodb.py --dry-run
 - `langflow_components/domain_authoring_flow/raw_text_input_example.md` - 업무 용어 metadata 입력 예시
 - `langflow_components/table_catalog_authoring_flow/raw_text_input_example.md` - 데이터셋/table catalog metadata 입력 예시
 - `langflow_components/main_flow_filters_authoring_flow/raw_text_input_example.md` - main flow filter metadata 입력 예시
-- `docs/V2_BASE_COMPLETION_REPORT_20260613.md` - v2 base 보강 내역과 최신 검증 결과
-- `docs/V2_LANGFLOW_CANVAS_WIRING_GUIDE.md` - main flow, retrieval flow, authoring flow의 output/input 연결 전체표
 - `langflow_components/router_flow/CONNECTION_GUIDE.md`
 - `langflow_components/metadata_qa_flow/CONNECTION_GUIDE.md`
 - `langflow_components/data_analysis_flow/CONNECTION_GUIDE.md`
 - `langflow_components/report_generation_flow/CONNECTION_GUIDE.md`
 - `langflow_components/operations_diagnosis_flow/CONNECTION_GUIDE.md`
-- `langflow_components/main_flow/CONNECTION_GUIDE.md`
 - `langflow_components/domain_authoring_flow/CONNECTION_GUIDE.md`
 - `langflow_components/table_catalog_authoring_flow/CONNECTION_GUIDE.md`
 - `langflow_components/main_flow_filters_authoring_flow/CONNECTION_GUIDE.md`

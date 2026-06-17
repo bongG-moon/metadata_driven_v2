@@ -113,14 +113,15 @@ def install_lfx_stubs() -> None:
 
 def load_components() -> dict[str, Any]:
     return {
-        "request_loader": load_component("langflow_components/main_flow/00_request_state_loader.py"),
-        "intent_prompt_builder": load_component("langflow_components/main_flow/07_intent_prompt_builder.py"),
-        "intent_normalizer": load_component("langflow_components/main_flow/08_intent_plan_normalizer.py"),
-        "dummy_retriever": load_component("langflow_components/main_flow/09_dummy_data_retriever.py"),
-        "retrieval_adapter": load_component("langflow_components/main_flow/15_retrieval_payload_adapter.py"),
-        "pandas_prompt_builder": load_component("langflow_components/main_flow/16_pandas_prompt_builder.py"),
-        "pandas_executor": load_component("langflow_components/main_flow/17_pandas_code_executor.py"),
-        "answer_builder": load_component("langflow_components/main_flow/20_answer_response_builder.py"),
+        "request_loader": load_component("langflow_components/data_analysis_flow/00_analysis_request_loader.py"),
+        "intent_prompt_builder": load_component("langflow_components/data_analysis_flow/02_intent_prompt_builder.py"),
+        "intent_normalizer": load_component("langflow_components/data_analysis_flow/03_intent_plan_normalizer.py"),
+        "dummy_retriever": load_component("langflow_components/data_analysis_flow/07_dummy_data_retriever.py"),
+        "retrieval_adapter": load_component("langflow_components/data_analysis_flow/13_retrieval_payload_adapter.py"),
+        "pandas_prompt_builder": load_component("langflow_components/data_analysis_flow/14_pandas_prompt_builder.py"),
+        "pandas_executor": load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py"),
+        "pandas_repair_builder": load_component("langflow_components/data_analysis_flow/16_pandas_repair_prompt_builder.py"),
+        "answer_builder": load_component("langflow_components/data_analysis_flow/19_answer_response_builder.py"),
     }
 
 
@@ -184,10 +185,21 @@ def run_case(
     payload = components["retrieval_adapter"].adapt_retrieval_payload(payload, retrieval_payload)
     pandas_prompt = components["pandas_prompt_builder"].build_pandas_prompt_payload(payload)["prompt"]
     pandas_raw = llm_tools.call_llm_json(llm, pandas_prompt)
-    payload = components["pandas_executor"].execute_pandas_from_llm(
+    first_pandas_payload = components["pandas_executor"].execute_pandas_from_llm(
         payload,
         json.dumps(pandas_raw["json"], ensure_ascii=False),
     )
+    repair_payload = components["pandas_repair_builder"].build_pandas_repair_payload(first_pandas_payload)
+    pandas_repair_raw = None
+    if (repair_payload.get("pandas_repair") or {}).get("required"):
+        repair_prompt = components["pandas_repair_builder"].build_pandas_repair_prompt_payload(repair_payload)["prompt"]
+        pandas_repair_raw = llm_tools.call_llm_json(llm, repair_prompt)
+        payload = components["pandas_executor"].execute_pandas_from_llm(
+            repair_payload,
+            json.dumps(pandas_repair_raw["json"], ensure_ascii=False),
+        )
+    else:
+        payload = repair_payload
     payload = components["answer_builder"].build_answer_response_payload(
         payload,
         '{"answer_message":"component validation"}',
@@ -211,6 +223,8 @@ def run_case(
         },
         "llm_intent": intent_raw["json"],
         "llm_pandas": pandas_raw["json"],
+        "llm_pandas_repair": pandas_repair_raw["json"] if pandas_repair_raw else None,
+        "pandas_repair": payload.get("pandas_repair", {}),
         "next_state": payload.get("state", {}),
     }
 

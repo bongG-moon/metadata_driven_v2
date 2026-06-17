@@ -18,6 +18,7 @@ def build_answer_response_payload(payload_value: Any, llm_response_value: Any) -
     data = _build_data(payload, analysis)
     applied_scope = _build_applied_scope(payload)
     answer_message = _answer_text_from_llm(llm_response_value) or _fallback_answer_text(data, applied_scope, analysis)
+    answer_message = _strip_embedded_result_tables(answer_message, data)
     state = _next_state(payload, data, applied_scope, answer_message)
 
     next_payload = dict(payload)
@@ -196,6 +197,105 @@ def _fallback_answer_text(data: dict[str, Any], applied_scope: dict[str, Any], a
     return f"{data['row_count']}건을 찾았습니다. 사용 dataset: {datasets}. 결과 예시: {preview}"
 
 
+def _strip_embedded_result_tables(answer_message: str, data: dict[str, Any]) -> str:
+    lines = str(answer_message or "").splitlines()
+    if not lines:
+        return ""
+
+    result_lines: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if _is_table_heading(line) and index + 1 < len(lines) and _is_table_like_line(lines[index + 1]):
+            index += 1
+            while index < len(lines) and _is_table_like_line(lines[index]):
+                index += 1
+            continue
+        if _is_table_like_line(line):
+            start = index
+            while index < len(lines) and _is_table_like_line(lines[index]):
+                index += 1
+            block = lines[start:index]
+            if _should_strip_table_block(block, data):
+                continue
+            result_lines.extend(block)
+            continue
+        result_lines.append(line)
+        index += 1
+
+    return _clean_blank_lines(result_lines).strip()
+
+
+def _is_table_heading(line: str) -> bool:
+    text = str(line or "").strip().strip("#").strip()
+    return text in {"결과", "결과 테이블", "상세 결과", "표", "데이터", "조회 결과"}
+
+
+def _is_table_like_line(line: str) -> bool:
+    text = str(line or "").strip()
+    if not text:
+        return False
+    if "\t" in text and len([cell for cell in text.split("\t") if cell.strip()]) >= 3:
+        return True
+    if text.startswith("|") and text.endswith("|") and text.count("|") >= 3:
+        return True
+    if re.fullmatch(r"[\s|:\-]+", text) and "|" in text:
+        return True
+    return False
+
+
+def _should_strip_table_block(block: list[str], data: dict[str, Any]) -> bool:
+    table_lines = [line for line in block if _is_table_like_line(line)]
+    if len(table_lines) < 2:
+        return False
+    header_cells = _table_cells(table_lines[0])
+    data_columns = [str(column) for column in data.get("columns", []) if str(column or "").strip()]
+    if len(header_cells) >= 3 and _has_column_overlap(header_cells, data_columns):
+        return True
+    return len(table_lines) >= 3
+
+
+def _table_cells(line: str) -> list[str]:
+    text = str(line or "").strip()
+    if "\t" in text:
+        return [cell.strip() for cell in text.split("\t") if cell.strip()]
+    if text.startswith("|") and text.endswith("|"):
+        return [cell.strip() for cell in text.strip("|").split("|") if cell.strip()]
+    return []
+
+
+def _has_column_overlap(header_cells: list[str], data_columns: list[str]) -> bool:
+    if not header_cells or not data_columns:
+        return False
+    normalized_columns = {_normalize_table_header(column) for column in data_columns}
+    return sum(1 for cell in header_cells if _normalize_table_header(cell) in normalized_columns) >= 2
+
+
+def _normalize_table_header(value: str) -> str:
+    aliases = {
+        "생산량": "PRODUCTION",
+        "할당장비대수": "EQP_COUNT",
+        "장비대수": "EQP_COUNT",
+        "재공": "WIP",
+        "목표": "OUT_PLAN",
+        "목표값": "OUT_PLAN",
+    }
+    text = re.sub(r"\s+", "", str(value or "").strip()).upper()
+    return aliases.get(text, text)
+
+
+def _clean_blank_lines(lines: list[str]) -> str:
+    cleaned: list[str] = []
+    previous_blank = False
+    for line in lines:
+        blank = not str(line or "").strip()
+        if blank and previous_blank:
+            continue
+        cleaned.append(line)
+        previous_blank = blank
+    return "\n".join(cleaned)
+
+
 def _extract_json_object(text: str) -> dict[str, Any]:
     raw = str(text or "").strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
@@ -253,7 +353,7 @@ def _unique(values: list[Any]) -> list[str]:
 
 
 class AnswerResponseBuilder(Component):
-    display_name = "18 Answer Response Builder"
+    display_name = "19 Answer Response Builder"
     description = "Combines the Langflow Gemini/LLM answer with result data, applied scope, and next-turn state."
     inputs = [
         DataInput(name="payload", display_name="Payload", required=True),

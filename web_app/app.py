@@ -247,7 +247,7 @@ def render_sidebar() -> dict[str, Any]:
     if getattr(st.session_state.langflow_api, "settings", None) != api_settings:
         st.session_state.langflow_api = LangflowApiClient(api_settings)
     configured = api_settings.configured_summary()
-    api_ready = configured["main"]
+    api_ready = configured["query"]
     st.sidebar.markdown(
         """
         <div class="sidebar-brand">
@@ -279,8 +279,8 @@ def render_sidebar() -> dict[str, Any]:
             <span class="config-badge {'ok' if runtime_mode == 'Python mock' or api_ready else 'warn'}">{'Ready' if runtime_mode == 'Langflow API' and api_ready else 'Mock' if runtime_mode == 'Python mock' else 'Missing'}</span>
           </div>
           <div class="config-row">
-            <div><div class="config-label">Query APIs</div><div class="config-env">ROUTER_FLOW_ID / MAIN_FLOW_ID</div></div>
-            <span class="config-badge {'ok' if configured['main'] else 'warn'}">{'set' if configured['main'] else 'empty'}</span>
+            <div><div class="config-label">Query APIs</div><div class="config-env">ROUTER_FLOW_ID + subflow IDs</div></div>
+            <span class="config-badge {'ok' if configured['query'] else 'warn'}">{'set' if configured['query'] else 'empty'}</span>
           </div>
           <div class="config-row">
             <div><div class="config-label">Authoring APIs</div><div class="config-env">domain/table/filter</div></div>

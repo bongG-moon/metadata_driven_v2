@@ -8,7 +8,7 @@
 
 - `docs/METADATA_AUTHORING_FLOW_GUIDE.md`와 `docs/DATA_RETRIEVAL_SOURCES.md`의 계약을 기준으로 독립 실행형 구현본을 구성했다.
 - 원본 workspace의 `.env`를 복사했고, 민감값은 문서에 기록하지 않았다.
-- Langflow main flow, main_flow retriever nodes, domain/table/filter authoring flow component를 포함했다.
+- Router/data analysis/metadata QA split flow, source retriever nodes, domain/table/filter authoring flow component를 포함했다.
 - 각 numbered Langflow custom component는 standalone 파일로 유지한다.
 - `README.md`, `pyproject.toml`, 일부 실행 guide의 로컬 경로, `LLM_IN_LOOP_VALIDATION_GUIDE.md`의 현재 검증 상태를 v2 기준으로 정리했다.
 

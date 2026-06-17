@@ -18,7 +18,7 @@ def load_component(path: str):
 
 
 def test_main_flow_api_response_builder_projects_current_payload() -> None:
-    builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
+    builder = load_component("langflow_components/data_analysis_flow/21_api_response_builder.py")
     payload = {
         "status": "ok",
         "answer_message": "오늘 전체 재공은 30입니다.",
@@ -67,7 +67,7 @@ def test_main_flow_api_response_builder_projects_current_payload() -> None:
 
 
 def test_main_flow_api_response_builder_normalizes_memory_data_ref() -> None:
-    builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
+    builder = load_component("langflow_components/data_analysis_flow/21_api_response_builder.py")
 
     result = builder.build_main_flow_api_response(
         {
@@ -81,7 +81,7 @@ def test_main_flow_api_response_builder_normalizes_memory_data_ref() -> None:
 
 
 def test_main_flow_api_response_builder_collects_state_followup_source_refs() -> None:
-    builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
+    builder = load_component("langflow_components/data_analysis_flow/21_api_response_builder.py")
     source_ref = {
         "store": "mongodb",
         "ref_id": "source-ref",
@@ -112,7 +112,7 @@ def test_main_flow_api_response_builder_collects_state_followup_source_refs() ->
 
 
 def test_main_flow_api_response_builder_preserves_metadata_qa_contract() -> None:
-    builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
+    builder = load_component("langflow_components/data_analysis_flow/21_api_response_builder.py")
 
     result = builder.build_main_flow_api_response(
         {

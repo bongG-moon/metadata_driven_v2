@@ -367,7 +367,7 @@ def test_retrieval_payload_adapter_preserves_full_restored_sources_without_new_r
     retrieval_payload = {"retrieval_payload": {"source_results": []}}
 
     for adapter_path in [
-        "langflow_components/main_flow/15_retrieval_payload_adapter.py",
+        "langflow_components/data_analysis_flow/13_retrieval_payload_adapter.py",
         "langflow_components/data_analysis_flow/13_retrieval_payload_adapter.py",
     ]:
         adapter = _load_flow_component(adapter_path)
@@ -391,7 +391,7 @@ def test_retrieval_payload_adapter_does_not_reuse_preview_sources_without_full_r
     retrieval_payload = {"retrieval_payload": {"source_results": []}}
 
     for adapter_path in [
-        "langflow_components/main_flow/15_retrieval_payload_adapter.py",
+        "langflow_components/data_analysis_flow/13_retrieval_payload_adapter.py",
         "langflow_components/data_analysis_flow/13_retrieval_payload_adapter.py",
     ]:
         adapter = _load_flow_component(adapter_path)
@@ -407,7 +407,15 @@ def _source_plan(job: dict) -> dict:
 
 
 def _load_component(filename: str):
-    path = ROOT / "langflow_components" / "main_flow" / filename
+    mapped_filename = {
+        "09_dummy_data_retriever.py": "07_dummy_data_retriever.py",
+        "10_oracle_query_retriever.py": "08_oracle_query_retriever.py",
+        "11_h_api_retriever.py": "09_h_api_retriever.py",
+        "12_datalake_retriever.py": "10_datalake_retriever.py",
+        "13_goodocs_retriever.py": "11_goodocs_retriever.py",
+        "14_source_retrieval_merger.py": "12_source_retrieval_merger.py",
+    }.get(filename, filename)
+    path = ROOT / "langflow_components" / "data_analysis_flow" / mapped_filename
     spec = importlib.util.spec_from_file_location("test_" + path.stem, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -416,7 +424,10 @@ def _load_component(filename: str):
 
 
 def _load_main_component(filename: str):
-    path = ROOT / "langflow_components" / "main_flow" / filename
+    mapped_filename = {
+        "15_retrieval_payload_adapter.py": "13_retrieval_payload_adapter.py",
+    }.get(filename, filename)
+    path = ROOT / "langflow_components" / "data_analysis_flow" / mapped_filename
     spec = importlib.util.spec_from_file_location("test_" + path.stem, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

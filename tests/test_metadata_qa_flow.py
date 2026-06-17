@@ -21,11 +21,11 @@ def load_component(path: str):
 
 
 def test_metadata_qa_lists_catalog_without_expanding_examples(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_prompt_builder = load_component("langflow_components/main_flow/04_route_classifier_prompt_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
-    api_builder = load_component("langflow_components/main_flow/22_api_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_prompt_builder = load_component("langflow_components/router_flow/03_route_classifier_prompt_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
+    api_builder = load_component("langflow_components/data_analysis_flow/21_api_response_builder.py")
 
     payload = seed_payload("현재 조회 가능한 DATA LIST를 알려줄래?", monkeypatch)
     routed = router.route_metadata_question(payload)
@@ -50,9 +50,9 @@ def test_metadata_qa_lists_catalog_without_expanding_examples(monkeypatch: Any) 
 
 
 def test_metadata_qa_shows_examples_for_requested_dataset(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
 
     payload = seed_payload("production_today 활용 예시 알려줘", monkeypatch)
     routed = classify_route(route_normalizer, router.route_metadata_question(payload), metadata_action="dataset_examples", target_dataset="production_today")
@@ -66,9 +66,9 @@ def test_metadata_qa_shows_examples_for_requested_dataset(monkeypatch: Any) -> N
 
 
 def test_metadata_qa_returns_registered_query_template(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
 
     payload = seed_payload("production_today 조회 쿼리문 알려줘", monkeypatch)
     routed = classify_route(route_normalizer, router.route_metadata_question(payload), metadata_action="dataset_query", target_dataset="production_today")
@@ -81,10 +81,10 @@ def test_metadata_qa_returns_registered_query_template(monkeypatch: Any) -> None
 
 
 def test_metadata_qa_maps_natural_quantity_term_to_dataset_query(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_prompt_builder = load_component("langflow_components/main_flow/04_route_classifier_prompt_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_prompt_builder = load_component("langflow_components/router_flow/03_route_classifier_prompt_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
 
     payload = seed_payload("생산량 데이터를 조회하는 쿼리를 알려줘", monkeypatch)
     routed = router.route_metadata_question(payload)
@@ -104,9 +104,9 @@ def test_metadata_qa_maps_natural_quantity_term_to_dataset_query(monkeypatch: An
 
 
 def test_metadata_qa_searches_domain_items(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
 
     payload = seed_payload("AUTO향 관련 등록 정보 알려줘", monkeypatch)
     routed = classify_route(route_normalizer, router.route_metadata_question(payload), metadata_action="domain_search", target_term="AUTO향")
@@ -118,9 +118,9 @@ def test_metadata_qa_searches_domain_items(monkeypatch: Any) -> None:
 
 
 def test_metadata_qa_does_not_overwrite_previous_current_data(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
 
     previous_current_data = {
         "columns": ["MODE", "WIP"],
@@ -146,9 +146,9 @@ def test_metadata_qa_does_not_overwrite_previous_current_data(monkeypatch: Any) 
 
 
 def test_metadata_qa_passes_analysis_question_to_existing_flow(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
 
     payload = seed_payload("오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성률을 보여줘", monkeypatch)
     routed = classify_route(route_normalizer, router.route_metadata_question(payload), route="data_analysis")
@@ -162,10 +162,10 @@ def test_metadata_qa_passes_analysis_question_to_existing_flow(monkeypatch: Any)
 
 
 def test_ambiguous_dataset_usage_question_uses_route_classifier(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_prompt_builder = load_component("langflow_components/main_flow/04_route_classifier_prompt_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_prompt_builder = load_component("langflow_components/router_flow/03_route_classifier_prompt_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
 
     payload = seed_payload("production_today로 뭘 볼 수 있어?", monkeypatch)
     routed = router.route_metadata_question(payload)
@@ -198,18 +198,18 @@ def test_ambiguous_dataset_usage_question_uses_route_classifier(monkeypatch: Any
 
 
 def test_direct_metadata_response_passes_through_downstream_nodes(monkeypatch: Any) -> None:
-    router = load_component("langflow_components/main_flow/03_route_candidate_builder.py")
-    route_prompt_builder = load_component("langflow_components/main_flow/04_route_classifier_prompt_builder.py")
-    route_normalizer = load_component("langflow_components/main_flow/05_route_classifier_normalizer.py")
-    response_builder = load_component("langflow_components/main_flow/06_metadata_qa_response_builder.py")
-    intent_prompt_builder = load_component("langflow_components/main_flow/07_intent_prompt_builder.py")
-    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
-    retrieval_adapter = load_component("langflow_components/main_flow/15_retrieval_payload_adapter.py")
-    pandas_prompt_builder = load_component("langflow_components/main_flow/16_pandas_prompt_builder.py")
-    pandas_executor = load_component("langflow_components/main_flow/17_pandas_code_executor.py")
-    data_store = load_component("langflow_components/main_flow/18_mongodb_data_store.py")
-    answer_prompt_builder = load_component("langflow_components/main_flow/19_answer_prompt_builder.py")
-    answer_builder = load_component("langflow_components/main_flow/20_answer_response_builder.py")
+    router = load_component("langflow_components/router_flow/02_route_candidate_builder.py")
+    route_prompt_builder = load_component("langflow_components/router_flow/03_route_classifier_prompt_builder.py")
+    route_normalizer = load_component("langflow_components/router_flow/04_route_classifier_normalizer.py")
+    response_builder = load_component("langflow_components/metadata_qa_flow/02_metadata_qa_response_builder.py")
+    intent_prompt_builder = load_component("langflow_components/data_analysis_flow/02_intent_prompt_builder.py")
+    intent_normalizer = load_component("langflow_components/data_analysis_flow/03_intent_plan_normalizer.py")
+    retrieval_adapter = load_component("langflow_components/data_analysis_flow/13_retrieval_payload_adapter.py")
+    pandas_prompt_builder = load_component("langflow_components/data_analysis_flow/14_pandas_prompt_builder.py")
+    pandas_executor = load_component("langflow_components/data_analysis_flow/15_pandas_code_executor.py")
+    data_store = load_component("langflow_components/data_analysis_flow/17_mongodb_data_store.py")
+    answer_prompt_builder = load_component("langflow_components/data_analysis_flow/18_answer_prompt_builder.py")
+    answer_builder = load_component("langflow_components/data_analysis_flow/19_answer_response_builder.py")
 
     payload = seed_payload("production_today 조회 쿼리문 알려줘", monkeypatch)
     routed = router.route_metadata_question(payload)
@@ -260,8 +260,8 @@ def classify_route(
 
 
 def seed_payload(question: str, monkeypatch: Any, state: dict[str, Any] | None = None) -> dict[str, Any]:
-    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
-    metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
+    request_loader = load_component("langflow_components/data_analysis_flow/00_analysis_request_loader.py")
+    metadata_loader = load_component("langflow_components/data_analysis_flow/01_metadata_context_loader.py")
     payload = request_loader.build_request_payload(question, "test-session", state=state or {})
     install_fake_pymongo(monkeypatch, seed_metadata_docs())
     return metadata_loader.load_metadata_payload(

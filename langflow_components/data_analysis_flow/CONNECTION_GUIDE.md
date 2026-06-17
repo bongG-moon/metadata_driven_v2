@@ -31,16 +31,49 @@ Backend orchestrator
 -> 14 Pandas Prompt Builder
 -> Pandas Code LLM
 -> 15 Pandas Code Executor
--> 16 MongoDB Data Store
--> 17 Answer Prompt Builder
+-> 16 Pandas Repair Prompt Builder
+-> Pandas Repair LLM + second 15 Pandas Code Executor
+-> 17 MongoDB Data Store
+-> 18 Answer Prompt Builder
 -> Answer LLM
--> 18 Answer Response Builder
--> 19 Answer Message Adapter
+-> 19 Answer Response Builder
+-> 20 Answer Message Adapter
 -> Chat Output
 
 parallel:
-18 Answer Response Builder -> 20 API Response Builder -> API/Data Output
+19 Answer Response Builder -> 21 API Response Builder -> API/Data Output
 ```
+
+## Pandas Repair Branch
+
+Pandas 보완을 실제로 사용하려면 첫 번째 `15 Pandas Code Executor.payload_out`을 바로 `17 MongoDB Data Store`에 연결하지 말고, `16 Pandas Repair Prompt Builder`를 거친 최종 결과를 저장 단계로 연결해야 합니다.
+
+`15 Pandas Code Executor`는 LLM이 만든 pandas JSON을 실행하는 역할만 담당합니다. `16 Pandas Repair Prompt Builder`가 첫 실행 결과를 보고 아래 branch outputs를 노출합니다.
+
+- `payload_out`: pass-through payload, or failed pandas context plus `pandas_repair` decision.
+- `repair_prompt`: prompt/message for a small pandas repair LLM.
+- `repair_decision`: branch decision data with `pandas_repair.required`.
+
+Recommended always-on wiring:
+
+```text
+15 Pandas Code Executor.payload_out
+  -> 16 Pandas Repair Prompt Builder.payload
+
+16 Pandas Repair Prompt Builder.repair_prompt
+  -> Pandas Repair LLM
+  -> second 15 Pandas Code Executor.llm_response
+
+16 Pandas Repair Prompt Builder.payload_out
+  -> second 15 Pandas Code Executor.payload
+
+second 15 Pandas Code Executor.payload_out
+  -> 17 MongoDB Data Store.payload
+```
+
+When `pandas_repair.required=false`, `16.payload_out` is pass-through and the second executor returns the original successful analysis without re-executing code. When `pandas_repair.required=true`, `repair_prompt` asks the repair LLM to rewrite the pandas code using the failed code, errors, intent plan, source summaries, and state summary. When repair fails again, the second executor returns `pandas_repair.status=repair_failed`; the downstream answer/API can surface the remaining error.
+
+Conditional wiring is also possible by routing `repair_decision.pandas_repair.required=false` directly to `17 MongoDB Data Store.payload` and `true` to the repair branch. The always-on wiring above is simpler and avoids accidentally storing the first failed attempt.
 
 ## Previous Result Restore
 
@@ -101,9 +134,11 @@ full restore가 실행되면 loader는 두 종류를 복원합니다.
 
 ## Result Store
 
-`16 MongoDB Data Store`는 pandas 실행 직후에 둡니다. 저장 대상은 분석에 사용된 원본 `runtime_sources`와 pandas 결과 `analysis.rows`입니다. 최종 답변 생성 이후가 아니라 pandas 결과가 만들어진 즉시 저장해야 payload 축소 목적에 맞습니다.
+`17 MongoDB Data Store`는 pandas repair branch 직후에 둡니다. 저장 대상은 분석에 사용된 원본 `runtime_sources`와 pandas 결과 `analysis.rows`입니다. 최종 답변 생성 이후가 아니라 최종 pandas 결과가 만들어진 즉시 저장해야 payload 축소 목적에 맞습니다.
 
-`18 Answer Response Builder`는 다음 턴을 위해 큰 rows는 제거하고 `state.current_data.data_ref`, `state.followup_source_results[*].data_ref`, `state.runtime_source_refs`를 남깁니다. 이 ref들이 다음 턴 full restore의 기준점입니다.
+Connect the second/retry `15 Pandas Code Executor.payload_out` to `17 MongoDB Data Store.payload`. This keeps the store step on the final pandas payload instead of saving the first failed attempt.
+
+`19 Answer Response Builder`는 다음 턴을 위해 큰 rows는 제거하고 `state.current_data.data_ref`, `state.followup_source_results[*].data_ref`, `state.runtime_source_refs`를 남깁니다. 이 ref들이 다음 턴 full restore의 기준점입니다.
 
 ## Naming Note
 

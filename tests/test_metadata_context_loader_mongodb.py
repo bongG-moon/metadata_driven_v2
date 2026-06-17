@@ -141,7 +141,7 @@ def install_fake_pymongo(monkeypatch: Any, docs_by_collection: dict[str, list[di
 
 
 def _load_metadata_loader():
-    path = ROOT / "langflow_components" / "main_flow" / "02_metadata_context_loader.py"
+    path = ROOT / "langflow_components" / "data_analysis_flow" / "01_metadata_context_loader.py"
     spec = importlib.util.spec_from_file_location("metadata_context_loader", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

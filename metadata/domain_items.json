@@ -93,9 +93,27 @@
     "lot_count": {
       "aliases": ["Lot 수량", "LOT 수량", "Lot 개수", "lot count"],
       "dataset_key": "lot_status",
+      "dataset_family": "lot",
       "quantity_column": "LOT_ID",
       "aggregation": "nunique",
       "output_column": "LOT_COUNT"
+    },
+    "hold_lot_count": {
+      "aliases": ["hold LOT 수", "hold LOT 수량", "HOLD Lot 개수", "홀드 Lot 수량"],
+      "dataset_key": "lot_status",
+      "dataset_family": "lot",
+      "quantity_column": "LOT_ID",
+      "condition": {"LOT_HOLD_STAT_CD": ["HOLD", "OnHold"]},
+      "aggregation": "nunique",
+      "output_column": "HOLD_LOT_COUNT"
+    },
+    "in_tat": {
+      "aliases": ["IN TAT", "in tat", "IN_TAT", "평균 in tat"],
+      "dataset_key": "lot_status",
+      "dataset_family": "lot",
+      "quantity_column": "IN_TAT",
+      "aggregation": "mean",
+      "output_column": "AVG_IN_TAT"
     },
     "wafer_qty": {
       "aliases": ["Wafer 수량", "WAFER 수량", "wafer", "wafer 개수", "wafer 몇개"],
@@ -230,6 +248,67 @@
         "lot": "lot_data"
       },
       "output_columns": ["LOT_COUNT", "WF_QTY", "DIE_QTY"]
+    },
+    "top_wip_process_hold_lot_in_tat": {
+      "display_name": "재공 상위 공정 Hold Lot/In TAT 분석",
+      "aliases": ["재공 상위 공정 hold lot in tat", "재공 많은 공정 hold lot", "hold LOT 평균 in tat", "hold LOT", "평균 in tat", "재공 top 공정"],
+      "question_cues": ["재공", "공정", "hold", "in tat"],
+      "intent_type": "multi_source_analysis",
+      "default_analysis_kind": "top_wip_process_hold_lot_in_tat",
+      "override_analysis_kinds": ["lot_count_by_process", "rank_top_n", "aggregate_wip_total", "generic_analysis"],
+      "required_quantity_terms": ["wip", "hold_lot_count", "in_tat"],
+      "required_dataset_families": ["wip", "lot"],
+      "grain_policy": "recipe_step_grain",
+      "source_aliases_by_family": {
+        "wip": "wip_data",
+        "lot": "lot_status_data"
+      },
+      "required_columns_by_family": {
+        "wip": ["WORK_DT", "OPER_NAME", "WIP"],
+        "lot": ["OPER_SHORT_DESC", "LOT_ID", "LOT_HOLD_STAT_CD", "IN_TAT"]
+      },
+      "replace_datasets": true,
+      "replace_retrieval_jobs": true,
+      "override_step_plan": true,
+      "top_n_policy": "question_or_default",
+      "blocked_filter_fields": ["LOT_HOLD_STAT_CD", "LOT_STAT_CD"],
+      "defaults": {
+        "top_n": 3
+      },
+      "step_plan_template": [
+        {
+          "step_id": "rank_top_wip_processes",
+          "operation": "rank_top_n",
+          "source_family": "wip",
+          "metric": "WIP",
+          "group_by": ["OPER_NAME"],
+          "rank_order": "desc",
+          "top_n": "$top_n",
+          "output_columns": ["OPER_SHORT_DESC", "WIP"]
+        },
+        {
+          "step_id": "summarize_hold_lot_and_in_tat",
+          "operation": "hold_lot_in_tat_by_process",
+          "source_family": "lot",
+          "filter_from_step": "rank_top_wip_processes",
+          "join_key": "OPER_SHORT_DESC",
+          "group_by": ["OPER_SHORT_DESC"],
+          "hold_status_column": "LOT_HOLD_STAT_CD",
+          "count_column": "LOT_ID",
+          "tat_column": "IN_TAT",
+          "metrics": ["HOLD_LOT_COUNT", "AVG_IN_TAT"],
+          "output_columns": ["OPER_SHORT_DESC", "HOLD_LOT_COUNT", "AVG_IN_TAT"]
+        },
+        {
+          "step_id": "join_top_wip_and_lot_metrics",
+          "operation": "left_join",
+          "left_step": "rank_top_wip_processes",
+          "right_step": "summarize_hold_lot_and_in_tat",
+          "join_key": "OPER_SHORT_DESC",
+          "output_columns": ["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]
+        }
+      ],
+      "output_columns": ["OPER_SHORT_DESC", "WIP", "HOLD_LOT_COUNT", "AVG_IN_TAT"]
     },
     "equipment_for_previous_products": {
       "display_name": "이전 제품 기준 장비 상세 현황",
