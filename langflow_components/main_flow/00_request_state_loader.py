@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
+from importlib import import_module
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
@@ -12,16 +14,30 @@ from lfx.schema.message import Message
 DEFAULT_STATE_PREVIEW_LIMIT = 5
 
 
-def build_request_payload(question: str, session_id: str = "demo-session", state: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_request_payload(
+    question: str,
+    session_id: str = "demo-session",
+    state: dict[str, Any] | None = None,
+    request_date: str | None = None,
+) -> dict[str, Any]:
+    date_value = str(request_date or "").strip() or _runtime_reference_date()
     return {
         "payload_version": "agent-v1",
         "status": "ok",
-        "request": {"session_id": session_id, "question": question, "timezone": "Asia/Seoul"},
+        "request": {"session_id": session_id, "question": question, "timezone": "Asia/Seoul", "date": date_value},
         "state": _compact_previous_state(state),
         "info": [],
         "warnings": [],
         "errors": [],
     }
+
+
+def _runtime_reference_date() -> str:
+    try:
+        zoneinfo = import_module("zoneinfo")
+        return datetime.now(zoneinfo.ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+    except Exception:
+        return datetime.now().strftime("%Y%m%d")
 
 
 def _compact_previous_state(state: Any) -> dict[str, Any]:

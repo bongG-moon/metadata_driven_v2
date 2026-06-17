@@ -17,6 +17,8 @@ def load_component(path: str):
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
+    if hasattr(module, "_runtime_reference_date"):
+        module._runtime_reference_date = lambda: "20260612"
     return module
 
 
@@ -136,6 +138,62 @@ def test_intent_prompt_exposes_dataset_specific_date_formats(monkeypatch: Any) -
     assert target["date_param_value_for_current_request"] == "2026-06-12"
     assert "Do not output 2026-06-12 for that dataset" in prompt
     assert "Never copy target's YYYY-MM-DD format to production_today" in prompt
+
+
+def test_request_date_overrides_stale_llm_date_params_and_filters(monkeypatch: Any) -> None:
+    request_loader = load_component("langflow_components/main_flow/00_request_state_loader.py")
+    metadata_loader = load_component("langflow_components/main_flow/02_metadata_context_loader.py")
+    intent_prompt_builder = load_component("langflow_components/main_flow/07_intent_prompt_builder.py")
+    intent_normalizer = load_component("langflow_components/main_flow/08_intent_plan_normalizer.py")
+
+    payload = request_loader.build_request_payload(
+        "오늘 DA공정에서 재공, 생산량과 목표값 그리고 생산달성율을 보여줘",
+        "test-session",
+        request_date="20260617",
+    )
+    payload = load_seed_metadata_payload(metadata_loader, payload, monkeypatch)
+    prompt = intent_prompt_builder.build_intent_prompt_payload(payload)["prompt"]
+    metadata_json = prompt.split("Metadata summary:\n", 1)[1].split("\n\nPrevious state summary:", 1)[0]
+    summary = json.loads(metadata_json)
+    assert summary["datasets"]["production_today"]["date_param_value_for_current_request"] == "20260617"
+    assert summary["datasets"]["target"]["date_param_value_for_current_request"] == "2026-06-17"
+
+    stale_llm_json = {
+        "intent_type": "multi_source_analysis",
+        "analysis_kind": "production_wip_target_rate",
+        "datasets": ["production_today", "wip_today", "target"],
+        "retrieval_jobs": [
+            {
+                "dataset_key": "production_today",
+                "source_alias": "prod",
+                "params": {"DATE": "20260612"},
+                "filters": [{"field": "DATE", "op": "eq", "value": "20260612"}],
+            },
+            {
+                "dataset_key": "wip_today",
+                "source_alias": "wip",
+                "params": {"DATE": "20260612"},
+                "filters": [{"field": "DATE", "op": "eq", "value": "20260612"}],
+            },
+            {
+                "dataset_key": "target",
+                "source_alias": "target",
+                "params": {"DATE": "2026-06-12"},
+                "filters": [{"field": "DATE", "op": "eq", "value": "2026-06-12"}],
+            },
+        ],
+        "step_plan": [{"step_id": "join", "operation": "production_wip_target_rate"}],
+    }
+
+    payload = intent_normalizer.normalize_intent_payload(payload, json.dumps(stale_llm_json, ensure_ascii=False))
+    jobs = {job["dataset_key"]: job for job in payload["retrieval_jobs"]}
+
+    assert jobs["production_today"]["params"]["DATE"] == "20260617"
+    assert jobs["wip_today"]["params"]["DATE"] == "20260617"
+    assert jobs["target"]["params"]["DATE"] == "2026-06-17"
+    assert _filter_values(jobs["production_today"], "DATE") == ["20260617"]
+    assert _filter_values(jobs["wip_today"], "DATE") == ["20260617"]
+    assert _filter_values(jobs["target"], "DATE") == ["2026-06-17"]
 
 
 def test_intent_normalizer_builds_recipe_jobs_when_llm_omits_jobs(monkeypatch: Any) -> None:

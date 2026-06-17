@@ -4,6 +4,7 @@ import json
 import re
 from copy import deepcopy
 from datetime import datetime, timedelta
+from importlib import import_module
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
@@ -815,9 +816,14 @@ def _fill_required_params(
     job: dict[str, Any] | None = None,
 ) -> None:
     required = catalog.get("required_params") if isinstance(catalog.get("required_params"), list) else []
-    if "DATE" in required and not params.get("DATE"):
+    has_date_param = bool(params.get("DATE"))
+    supports_date_filter = _catalog_has_filter(catalog, "DATE")
+    if "DATE" in required or has_date_param or supports_date_filter:
         date_value = _date_value_for_job(question, dataset_key, catalog, job or {}, request_date)
-        params["DATE"] = _date_param(dataset_key, date_value, catalog)
+        if date_value:
+            params["DATE"] = _date_param(dataset_key, date_value, catalog)
+        elif not params.get("DATE"):
+            params["DATE"] = _date_param(dataset_key, request_date, catalog)
     if "LOT_ID" in required and not params.get("LOT_ID"):
         lot_id = _extract_lot_id(question)
         if lot_id:
@@ -848,6 +854,8 @@ def _augmented_filters_for_job(
     )
     merged = [deepcopy(item) for item in raw_filters if isinstance(item, dict)]
     merged.extend(deepcopy(item) for item in plan_filters if isinstance(item, dict))
+    if any(str(item.get("field") or "").strip() == "DATE" for item in inferred_filters if isinstance(item, dict)):
+        merged = [item for item in merged if str(item.get("field") or "").strip() != "DATE"]
     merged.extend(deepcopy(item) for item in inferred_filters if isinstance(item, dict))
     if plan.get("state_product_keys") and _supports_product_grain_filter(dataset_catalog, plan):
         merged.append({"field": "PRODUCT_GRAIN", "op": "from_state"})
@@ -1666,8 +1674,18 @@ def _extract_lot_id(question: str) -> str:
 
 def _request_date(payload: dict[str, Any]) -> str:
     request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
-    date_value = str(request.get("date") or request.get("request_date") or "20260612").strip()
+    date_value = str(request.get("date") or request.get("request_date") or "").strip()
+    if not date_value:
+        date_value = _runtime_reference_date()
     return date_value.replace("-", "")
+
+
+def _runtime_reference_date() -> str:
+    try:
+        zoneinfo = import_module("zoneinfo")
+        return datetime.now(zoneinfo.ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+    except Exception:
+        return datetime.now().strftime("%Y%m%d")
 
 
 def _date_value_for_job(

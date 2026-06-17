@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import datetime
+from importlib import import_module
 from typing import Any
 
 from lfx.custom.custom_component.component import Component
@@ -49,7 +51,7 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
     question = str((payload.get("request") or {}).get("question") or "")
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     state = payload.get("state") if isinstance(payload.get("state"), dict) else {}
-    request_date = str((payload.get("request") or {}).get("date") or "20260612")
+    request_date = _request_date(payload)
     prompt = "\n".join(
         [
             "You are the intent planning node for a metadata-driven manufacturing data agent.",
@@ -137,8 +139,8 @@ def build_intent_prompt_payload(payload_value: Any) -> dict[str, Any]:
             "- Always return retrieval_jobs for every dataset in datasets unless intent_type=finish. Do not return only datasets/params/filters.",
             "- Always return step_plan for analysis requests unless intent_type=finish. The step_plan must say which operation uses which source_alias.",
             "- DATE params are dataset-specific. For each dataset, read metadata.datasets[dataset_key].date_format and date_param_value_for_current_request. Use that exact value in params_by_dataset and retrieval_jobs[].params.DATE.",
-            "- If a dataset date_format is YYYYMMDD, DATE must look like 20260612. Do not output 2026-06-12 for that dataset.",
-            "- If a dataset date_format is YYYY-MM-DD, DATE must look like 2026-06-12. Do not output 20260612 for that dataset.",
+            f"- If a dataset date_format is YYYYMMDD, DATE must look like {_date_param_value_for_dataset(request_date, {'date_format': 'YYYYMMDD'})}. Do not output {_date_param_value_for_dataset(request_date, {'date_format': 'YYYY-MM-DD'})} for that dataset.",
+            f"- If a dataset date_format is YYYY-MM-DD, DATE must look like {_date_param_value_for_dataset(request_date, {'date_format': 'YYYY-MM-DD'})}. Do not output {_date_param_value_for_dataset(request_date, {'date_format': 'YYYYMMDD'})} for that dataset.",
             "- Never copy target's YYYY-MM-DD format to production_today, wip_today, or other datasets unless that dataset's own metadata says YYYY-MM-DD.",
             "- When a retrieval job contains DATE params, also copy required_param_mappings and date_format from the dataset metadata into that retrieval_jobs item when present.",
             "- Use intent_type=followup_transform when the question says 이 제품/그 제품/해당 제품/이때/그때/방금 결과 and needs previous state.",
@@ -227,6 +229,20 @@ def _date_param_value_for_dataset(request_date: str, dataset: dict[str, Any]) ->
     if fmt == "YYYY.MM.DD" and len(clean) == 8:
         return f"{clean[0:4]}.{clean[4:6]}.{clean[6:8]}"
     return clean
+
+
+def _request_date(payload: dict[str, Any]) -> str:
+    request = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+    date_value = str(request.get("date") or request.get("request_date") or "").strip()
+    return (date_value or _runtime_reference_date()).replace("-", "")
+
+
+def _runtime_reference_date() -> str:
+    try:
+        zoneinfo = import_module("zoneinfo")
+        return datetime.now(zoneinfo.ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
+    except Exception:
+        return datetime.now().strftime("%Y%m%d")
 
 
 def _state_summary(state: dict[str, Any]) -> dict[str, Any]:
